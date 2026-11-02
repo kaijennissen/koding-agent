@@ -7,18 +7,25 @@ emits <exit> or the turn budget runs out.
 """
 
 import asyncio
-import logging
-import os
 import re
-import signal
-import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Self, TypedDict, assert_never, cast
+from typing import TypedDict, cast
 
 import httpx2
 
-from koding_agent.core.colours import GREEN, GREY, RED, RESET, YELLOW
+from koding_agent.core.events import (
+    OnEvent,
+    TurnStart,
+)
+from koding_agent.core.tools import (
+    BashCall,
+    RunTool,
+    _ignore,
+    create_uuid,
+    emit,
+    format_observation,
+    run_tool,
+)
 
 # OLLAMA_ENDPOINT = "http://localhost:11434/api/chat"
 OLLAMA_ENDPOINT = "http://host.docker.internal:11434/api/chat"
@@ -98,85 +105,7 @@ class Message(TypedDict):
     content: str
 
 
-@dataclass(frozen=True)
-class BashResult:
-    cmd: str
-    stdout: str
-    stderr: str
-    returncode: int | None
-    timed_out: bool
-
-    @classmethod
-    def completed(
-        cls, cmd: str, stdout: str, stderr: str, returncode: int | None
-    ) -> Self:
-        return cls(cmd, stdout, stderr, returncode, timed_out=False)
-
-    @classmethod
-    def timeout(cls, cmd: str, stdout: str = "", stderr: str = "") -> Self:
-        return cls(cmd, stdout, stderr, returncode=None, timed_out=True)
-
-
-@dataclass(frozen=True, kw_only=True)
-class BashCall:
-    id: str
-    cmd: str
-
-
-@dataclass(frozen=True, kw_only=True)
-class SkillCall:
-    id: str
-    name: str
-
-
-type ToolCall = BashCall
-type RunTool = Callable[[str], Awaitable[BashResult]]  # cmd -> result
-
-
-@dataclass(frozen=True)
-class ToolStart:
-    call: ToolCall
-
-
-@dataclass(frozen=True)
-class ToolEnd:
-    call: ToolCall
-    result: BashResult
-
-
-@dataclass(frozen=True)
-class ToolCancelled:
-    call: ToolCall
-
-
-type Event = ToolStart | ToolEnd | ToolCancelled | TurnStart
-type OnEvent = Callable[[Event], None]  # plain def, must return immediately
 type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
-
-
-@dataclass(frozen=True)
-class TurnStart:
-    turn: int
-    max_turns: int
-
-
-def create_uuid():
-    return str(uuid.uuid4()).split("-")[0]
-
-
-def format_observation(result: BashResult) -> str:
-    """Turn a BashResult into the text the model reads."""
-    if result.timed_out:
-        return (
-            f"Command `{result.cmd}` was killed because it hit the time limit. "
-            "It did not finish, so its result and side effects are unknown, "
-            "and any output it produced was discarded."
-        )
-    return (
-        f"Command `{result.cmd}` finished with exit code {result.returncode}.\n"
-        f'stdout: "{result.stdout}"\n'
-        f'stderr: "{result.stderr}"'
-    )
 
 
 class LlmError(Exception):
@@ -235,83 +164,6 @@ def parse_action(text: str) -> dict[str, list[str]]:
     if bash_bodies:
         return {"bash": bash_bodies}
     return {"error": ["Couldn't parse any action. Please retry!"]}
-
-
-def print_event(event: Event) -> None:
-    match event:
-        case TurnStart(turn=turn, max_turns=max_turns):
-            print(f"{GREY}Turn: {turn}/{max_turns}{RESET}")
-        case ToolStart(call=BashCall(cmd=cmd)):
-            print(f"{YELLOW}running: {cmd}{RESET}")
-
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(returncode=0)):
-            print(f"{GREEN}success: {cmd}{RESET}")
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(timed_out=True)):
-            print(f"{RED}timeout: {cmd}{RESET}")
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(returncode=code)):
-            print(f"{RED}failure (exit {code}): {cmd}{RESET}")
-        case ToolCancelled(call=BashCall(cmd=cmd)):
-            print(f"{RED}cancelled: {cmd}{RESET}")
-        case _:
-            assert_never(event)
-
-
-async def run_bash_tool(cmd: str, *, timeout: float) -> BashResult:
-    proc = await asyncio.create_subprocess_shell(
-        cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        start_new_session=True,
-    )
-    proc_id = proc.pid
-
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return BashResult.completed(
-            cmd=cmd,
-            stdout=stdout.decode(errors="replace"),
-            stderr=stderr.decode(errors="replace"),
-            returncode=proc.returncode,
-        )
-
-    except TimeoutError:
-        return BashResult.timeout(cmd)
-
-    finally:
-        try:
-            os.killpg(proc_id, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        await proc.wait()
-
-
-def _ignore(_: Event) -> None: ...
-
-
-def emit(on_event: OnEvent, event: Event) -> None:
-    """Call the front end's callback; a broken callback must not kill the agent.
-
-    Catches Exception, not BaseException, so CancelledError still passes through.
-    """
-    try:
-        on_event(event)
-    except Exception:
-        logging.exception("on_event failed")
-
-
-async def run_tool(
-    tool_call: ToolCall,
-    tool_fn: RunTool,
-    on_event: OnEvent = _ignore,
-) -> BashResult:
-    emit(on_event, ToolStart(call=tool_call))
-    try:
-        result = await tool_fn(tool_call.cmd)
-    except asyncio.CancelledError:
-        emit(on_event, ToolCancelled(call=tool_call))
-        raise
-    emit(on_event, ToolEnd(call=tool_call, result=result))
-    return result
 
 
 async def run_agent(
