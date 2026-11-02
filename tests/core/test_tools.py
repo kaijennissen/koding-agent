@@ -6,11 +6,17 @@ from pathlib import Path
 
 import pytest
 
-from koding_agent.core.agent import (
+from fakes import ok
+from koding_agent.core.events import Event, ToolCancelled, ToolEnd, ToolStart
+from koding_agent.core.tools import (
+    BashCall,
     BashResult,
     format_observation,
     run_bash_tool,
+    run_tool,
 )
+
+LS = BashCall(id="1", cmd="ls")
 
 
 @pytest.mark.parametrize(
@@ -84,3 +90,39 @@ def test_format_observation(
         assert part in observation
     for part in absent:
         assert part not in observation
+
+
+class TestRunTool:
+    @pytest.fixture
+    def call(self) -> BashCall:
+        return LS
+
+    async def test_reports_start_and_end_with_the_result(
+        self, call: BashCall, events: list[Event]
+    ) -> None:
+        async def tool(cmd: str) -> BashResult:
+            return ok(cmd)
+
+        result = await run_tool(call, tool, events.append)
+
+        assert result == ok("ls")
+        assert events == [ToolStart(call), ToolEnd(call, result)]
+
+    async def test_reports_cancellation(
+        self, call: BashCall, events: list[Event]
+    ) -> None:
+        """A cancelled command still ends its row, so no bullet stays 'running'."""
+        started = asyncio.Event()
+
+        async def hang(_: str) -> BashResult:
+            started.set()
+            await asyncio.Event().wait()  # never set
+            raise AssertionError("unreachable")
+
+        task = asyncio.create_task(run_tool(call, hang, events.append))
+        await started.wait()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert events == [ToolStart(call), ToolCancelled(call)]

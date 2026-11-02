@@ -1,9 +1,11 @@
+"""Event types the core emits while running, and `print_event` to render them in a terminal."""
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import assert_never
 
+from koding_agent.core import tools
 from koding_agent.core.colours import GREEN, GREY, RED, RESET, YELLOW
-from koding_agent.core.tools import BashCall, BashResult, ToolCall
 
 
 @dataclass(frozen=True)
@@ -14,18 +16,18 @@ class TurnStart:
 
 @dataclass(frozen=True)
 class ToolStart:
-    call: ToolCall
+    call: tools.ToolCall
 
 
 @dataclass(frozen=True)
 class ToolEnd:
-    call: ToolCall
-    result: BashResult
+    call: tools.ToolCall
+    result: tools.BashResult
 
 
 @dataclass(frozen=True)
 class ToolCancelled:
-    call: ToolCall
+    call: tools.ToolCall
 
 
 type Event = ToolStart | ToolEnd | ToolCancelled | TurnStart
@@ -36,16 +38,22 @@ def print_event(event: Event) -> None:
     match event:
         case TurnStart(turn=turn, max_turns=max_turns):
             print(f"{GREY}Turn: {turn}/{max_turns}{RESET}")
-        case ToolStart(call=BashCall(cmd=cmd)):
+        case ToolStart(call=tools.BashCall(cmd=cmd)):
             print(f"{YELLOW}running: {cmd}{RESET}")
 
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(returncode=0)):
+        case ToolEnd(
+            call=tools.BashCall(cmd=cmd), result=tools.BashResult(returncode=0)
+        ):
             print(f"{GREEN}success: {cmd}{RESET}")
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(timed_out=True)):
+        case ToolEnd(
+            call=tools.BashCall(cmd=cmd), result=tools.BashResult(timed_out=True)
+        ):
             print(f"{RED}timeout: {cmd}{RESET}")
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(returncode=code)):
+        case ToolEnd(
+            call=tools.BashCall(cmd=cmd), result=tools.BashResult(returncode=code)
+        ):
             print(f"{RED}failure (exit {code}): {cmd}{RESET}")
-        case ToolCancelled(call=BashCall(cmd=cmd)):
+        case ToolCancelled(call=tools.BashCall(cmd=cmd)):
             print(f"{RED}cancelled: {cmd}{RESET}")
         case _:
             assert_never(event)

@@ -1,3 +1,5 @@
+"""Tool call and result types, plus running bash commands and bracketing them with events."""
+
 import asyncio
 import logging
 import os
@@ -7,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Self
 
-from koding_agent.core.events import Event, OnEvent, ToolCancelled, ToolEnd, ToolStart
+from koding_agent.core import events
 
 
 @dataclass(frozen=True)
@@ -93,10 +95,10 @@ async def run_bash_tool(cmd: str, *, timeout: float) -> BashResult:
         await proc.wait()
 
 
-def _ignore(_: Event) -> None: ...
+def _ignore(_: events.Event) -> None: ...
 
 
-def emit(on_event: OnEvent, event: Event) -> None:
+def emit(on_event: events.OnEvent, event: events.Event) -> None:
     """Call the front end's callback; a broken callback must not kill the agent.
 
     Catches Exception, not BaseException, so CancelledError still passes through.
@@ -110,13 +112,13 @@ def emit(on_event: OnEvent, event: Event) -> None:
 async def run_tool(
     tool_call: ToolCall,
     tool_fn: RunTool,
-    on_event: OnEvent = _ignore,
+    on_event: events.OnEvent = _ignore,
 ) -> BashResult:
-    emit(on_event, ToolStart(call=tool_call))
+    emit(on_event, events.ToolStart(call=tool_call))
     try:
         result = await tool_fn(tool_call.cmd)
     except asyncio.CancelledError:
-        emit(on_event, ToolCancelled(call=tool_call))
+        emit(on_event, events.ToolCancelled(call=tool_call))
         raise
-    emit(on_event, ToolEnd(call=tool_call, result=result))
+    emit(on_event, events.ToolEnd(call=tool_call, result=result))
     return result

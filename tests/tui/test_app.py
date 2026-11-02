@@ -16,18 +16,15 @@ from textual.pilot import Pilot
 from textual.widgets import Static
 
 from fakes import ok, ok_tool, replies
-from koding_agent.core.agent import (
-    BashCall,
-    BashResult,
+from koding_agent.core.agent import LlmCall, LlmError, Message
+from koding_agent.core.events import (
     Event,
-    LlmCall,
-    LlmError,
-    Message,
     ToolCancelled,
     ToolEnd,
     ToolStart,
     TurnStart,
 )
+from koding_agent.core.tools import BashCall, BashResult
 from koding_agent.tui.app import (
     AgentApp,
     PromptArea,
