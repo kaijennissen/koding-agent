@@ -14,14 +14,13 @@ import signal
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import Self, TypedDict, assert_never, cast
-from functools import cache
 
 import httpx2
-from httpx2 import AsyncClient
 import yaml
-from pathlib import Path
+from httpx2 import AsyncClient
 
 from koding_agent.banner import GREY, RESET, rgb
 
@@ -176,9 +175,6 @@ class Skill:
     description: str
     body: str
 
-class SkillLibrary(TypedDict):
-    name:str
-    skill:Skill
 
 
 type ToolCall = BashCall | SkillCall
@@ -322,11 +318,11 @@ class SkillLibraryEntry:
     description:str
     path:Path
 
-class SkillLibrary
+class SkillLibrary:
     entries:dict[str,SkillLibraryEntry]
 
     def resolve(self,name:str):
-        skill_to_load=entries.get(name)
+        skill_to_load=self.entries.get(name)
         meta,body=load_skill(skill_to_load.path)
         return Skill(name=meta["name"],description=meta["description"],body=body)
 
@@ -345,13 +341,14 @@ def load_skill(path: Path) -> Skill:
         raise ValueError(f"{path} missing required frontmatter: {missing}")
     return meta, body
 
-def load_skills(dir:Path)->SkillLibrary
+def load_skills(dir:Path)->SkillLibrary:
     library={}
     skill_files=dir.glob("*/skill.md")
     for path in skill_files:
         if path.is_file():
             meta,_=load_skill(path)
-        library.update({name:SkillLibraryEntry(name=meta["name"],description=meta["description"],path=path)})
+            name=meta["name"]
+        library.update({name:SkillLibraryEntry(name=name,description=meta["description"],path=path)})
     return library
 
 async def run_skill_tool(tool: SkillCall) -> SkillResult:

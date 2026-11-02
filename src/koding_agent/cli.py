@@ -166,7 +166,7 @@ async def run_tui(
 
 def cli(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
-    tool_fn = partial(run_bash_tool, timeout=args.timeout)
+    #tool_fn = partial(run_bash_tool, timeout=args.timeout)
     context = None if args.no_context else load_context()
     match select_mode(args):
         case "headless":
