@@ -21,10 +21,10 @@ from koding_agent.core.prompt import SYSTEM_PROMPT_TEMPLATE
 from koding_agent.core.tool_types import BashCall
 from koding_agent.core.tools import (
     RunTool,
-    _ignore,
     create_uuid,
     emit,
     format_observation,
+    ignore_event,
     run_tool,
 )
 
@@ -118,7 +118,7 @@ async def run_agent(
     max_turns: int,
     call: LlmCall,
     tool_fn: RunTool,
-    on_event: OnEvent = _ignore,
+    on_event: OnEvent = ignore_event,
 ) -> tuple[str, list[Message]]:
     for turn in range(max_turns):
         emit(on_event, TurnStart(turn, max_turns))
