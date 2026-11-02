@@ -1,47 +1,21 @@
+"""Running bash commands and bracketing them with events."""
+
 import asyncio
 import logging
 import os
 import signal
 import uuid
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
-from typing import Self
 
-from koding_agent.core.events import Event, OnEvent, ToolCancelled, ToolEnd, ToolStart
+from koding_agent.core.events import (
+    Event,
+    OnEvent,
+    ToolCancelled,
+    ToolEnd,
+    ToolStart,
+)
+from koding_agent.core.tool_types import BashResult, ToolCall
 
-
-@dataclass(frozen=True)
-class BashResult:
-    cmd: str
-    stdout: str
-    stderr: str
-    returncode: int | None
-    timed_out: bool
-
-    @classmethod
-    def completed(
-        cls, cmd: str, stdout: str, stderr: str, returncode: int | None
-    ) -> Self:
-        return cls(cmd, stdout, stderr, returncode, timed_out=False)
-
-    @classmethod
-    def timeout(cls, cmd: str, stdout: str = "", stderr: str = "") -> Self:
-        return cls(cmd, stdout, stderr, returncode=None, timed_out=True)
-
-
-@dataclass(frozen=True, kw_only=True)
-class BashCall:
-    id: str
-    cmd: str
-
-
-@dataclass(frozen=True, kw_only=True)
-class SkillCall:
-    id: str
-    name: str
-
-
-type ToolCall = BashCall
 type RunTool = Callable[[str], Awaitable[BashResult]]  # cmd -> result
 
 
@@ -93,7 +67,7 @@ async def run_bash_tool(cmd: str, *, timeout: float) -> BashResult:
         await proc.wait()
 
 
-def _ignore(_: Event) -> None: ...
+def ignore_event(_: Event) -> None: ...
 
 
 def emit(on_event: OnEvent, event: Event) -> None:
@@ -110,7 +84,7 @@ def emit(on_event: OnEvent, event: Event) -> None:
 async def run_tool(
     tool_call: ToolCall,
     tool_fn: RunTool,
-    on_event: OnEvent = _ignore,
+    on_event: OnEvent = ignore_event,
 ) -> BashResult:
     emit(on_event, ToolStart(call=tool_call))
     try:

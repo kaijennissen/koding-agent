@@ -9,6 +9,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
+from koding_agent.core.tool_types import BashCall, BashResult
 from textual.app import App, ComposeResult
 from textual.color import Color
 from textual.containers import VerticalScroll
@@ -16,13 +17,9 @@ from textual.pilot import Pilot
 from textual.widgets import Static
 
 from fakes import ok, ok_tool, replies
-from koding_agent.core.agent import (
-    BashCall,
-    BashResult,
+from koding_agent.core.agent import LlmCall, LlmError, Message
+from koding_agent.core.events import (
     Event,
-    LlmCall,
-    LlmError,
-    Message,
     ToolCancelled,
     ToolEnd,
     ToolStart,

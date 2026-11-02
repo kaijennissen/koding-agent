@@ -1,9 +1,12 @@
+"""Event types the core emits while running, and `print_event` to render them in a terminal."""
+
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import assert_never
 
+from koding_agent.core.tool_types import BashCall, BashResult, ToolCall
+
 from koding_agent.core.colours import GREEN, GREY, RED, RESET, YELLOW
-from koding_agent.core.tools import BashCall, BashResult, ToolCall
 
 
 @dataclass(frozen=True)
