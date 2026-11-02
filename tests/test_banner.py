@@ -1,5 +1,7 @@
 """The banner shows name, version and model, and stays plain without colour."""
 
+import pytest
+
 from koding_agent import __version__
 from koding_agent.banner import render_banner, render_prompt
 
@@ -28,3 +30,10 @@ def test_color_prompt_wraps_codes_only_for_readline() -> None:
     assert raw.count("❯") == 3 and "\001" not in raw
     assert wrapped.count("\001") == wrapped.count("\002") == 4
     assert wrapped.replace("\001", "").replace("\002", "") == raw
+
+
+@pytest.mark.parametrize(
+    ("context", "expected"), [("AGENTS.md", "context: AGENTS.md"), (None, "context: -")]
+)
+def test_banner_shows_context(context: str | None, expected: str) -> None:
+    assert expected in render_banner("m", color=False, context=context)

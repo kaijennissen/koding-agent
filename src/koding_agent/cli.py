@@ -23,10 +23,12 @@ from koding_agent.agent import (
     MODEL,
     RED,
     RESET,
-    SYSTEM_PROMPT,
+    Context,
     LlmError,
     Message,
+    build_system_prompt,
     llm_call,
+    load_context,
     print_event,
     run_agent,
 )
@@ -68,6 +70,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="seconds a bash command may run before it is killed (default: %(default)s)",
     )
     parser.add_argument(
+        "-nc",
+        "--no-context",
+        action="store_true",
+        help="do not load AGENTS.md from the current directory",
+    )
+    parser.add_argument(
         "-v", "--version", action="version", version=f"%(prog)s {__version__}"
     )
     args = parser.parse_args(argv)
@@ -84,10 +92,15 @@ def select_mode(args: argparse.Namespace) -> Mode:
     return "plain" if args.plain else "tui"
 
 
-async def run_headless(prompt: str, max_turns: int, skills_dir: Path) -> None:
+async def run_headless(
+    prompt: str,
+    max_turns: int,
+    context: Context | None = None,
+    skills_dir: Path | None = None,
+) -> None:
     async with ollama_client() as client:
         messages: list[Message] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_prompt(context)},
             {"role": "user", "content": prompt},
         ]
         try:
@@ -102,11 +115,15 @@ async def run_headless(prompt: str, max_turns: int, skills_dir: Path) -> None:
         print("\n" + answer + "\n")
 
 
-async def run_plain(max_turns: int, skills_dir: Path) -> None:
+async def run_plain(
+    max_turns: int, context: Context | None = None, skills_dir: Path | None = None
+) -> None:
     async with ollama_client() as client:
         call = partial(llm_call, client)
-        messages: list[Message] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        print_banner(MODEL)
+        messages: list[Message] = [
+            {"role": "system", "content": build_system_prompt(context)}
+        ]
+        print_banner(MODEL, context.path.name if context else None)
         while True:
             prompt = input(prompt_text())
             if prompt == "exit":
@@ -127,7 +144,12 @@ async def run_plain(max_turns: int, skills_dir: Path) -> None:
             print("\n" + answer + "\n")
 
 
-async def run_tui(max_turns: int, first_prompt: str | None, skills_dir: Path) -> None:
+async def run_tui(
+    max_turns: int,
+    first_prompt: str | None,
+    context: Context | None = None,
+    skills_dir: Path | None = None,
+) -> None:
     from koding_agent.tui.app import AgentApp  # keeps Textual off the -p path
 
     async with ollama_client() as client:
@@ -137,6 +159,7 @@ async def run_tui(max_turns: int, first_prompt: str | None, skills_dir: Path) ->
             max_turns=max_turns,
             first_prompt=first_prompt,
             skills_dir=skills_dir,
+            context=context,
         )
         await app.run_async()
 
@@ -144,6 +167,7 @@ async def run_tui(max_turns: int, first_prompt: str | None, skills_dir: Path) ->
 def cli(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     tool_fn = partial(run_bash_tool, timeout=args.timeout)
+    context = None if args.no_context else load_context()
     match select_mode(args):
         case "headless":
             asyncio.run(
@@ -154,7 +178,13 @@ def cli(argv: Sequence[str] | None = None) -> None:
                 )
             )
         case "plain":
-            asyncio.run(run_plain(max_turns=args.max_turns, skills_dir=args.skills_dir))
+            asyncio.run(
+                run_plain(
+                    max_turns=args.max_turns,
+                    context=context,
+                    skills_dir=args.skills_dir,
+                )
+            )
         case "tui":
             if not (sys.stdin.isatty() and sys.stdout.isatty()):
                 sys.exit(
@@ -165,6 +195,7 @@ def cli(argv: Sequence[str] | None = None) -> None:
                 run_tui(
                     max_turns=args.max_turns,
                     first_prompt=args.prompt,
+                    context=context,
                     skills_dir=args.skills_dir,
                 )
             )

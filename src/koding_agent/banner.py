@@ -32,7 +32,7 @@ def use_color() -> bool:
     return sys.stdout.isatty() and "NO_COLOR" not in os.environ
 
 
-def render_banner(model: str, color: bool) -> str:
+def render_banner(model: str, color: bool, context: str | None = None) -> str:
     def paint(text: str, *codes: str) -> str:
         return f"{''.join(codes)}{text}{RESET}" if color else text
 
@@ -48,11 +48,12 @@ def render_banner(model: str, color: bool) -> str:
 
     line1 = f"{logo(k_top, a_top, i_top)}   {name}"
     line2 = f"{logo(k_bot, a_bot, i_bot)}   {meta}"
-    return f"{line1}\n{line2}\n"
+    line3 = f"{' ' * 8}{paint(f'context: {context or "-"}', DIM)}"
+    return f"{line1}\n{line2}\n{line3}\n"
 
 
-def print_banner(model: str) -> None:
-    print(render_banner(model, color=use_color()))
+def print_banner(model: str, context: str | None = None) -> None:
+    print(render_banner(model, color=use_color(), context=context))
 
 
 def render_prompt(color: bool, readline_active: bool) -> str:
