@@ -16,9 +16,12 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Self, TypedDict, assert_never, cast
+from functools import cache
 
 import httpx2
 from httpx2 import AsyncClient
+import yaml
+from pathlib import Path
 
 from koding_agent.banner import GREY, RESET, rgb
 
@@ -167,6 +170,16 @@ class SkillCall:
     def skill_path(self) -> Path:
         return self.skills_dir.joinpath(self.name).joinpath("SKILL.md")
 
+@dataclass(frozen=True)
+class Skill:
+    name:str
+    description: str
+    body: str
+
+class SkillLibrary(TypedDict):
+    name:str
+    skill:Skill
+
 
 type ToolCall = BashCall | SkillCall
 type ToolResult = BashResult | SkillResult
@@ -302,6 +315,44 @@ def print_event(event: Event) -> None:
         case _:
             assert_never(event)
 
+
+@dataclass(frozen=True)
+class SkillLibraryEntry:
+    name:str
+    description:str
+    path:Path
+
+class SkillLibrary
+    entries:dict[str,SkillLibraryEntry]
+
+    def resolve(self,name:str):
+        skill_to_load=entries.get(name)
+        meta,body=load_skill(skill_to_load.path)
+        return Skill(name=meta["name"],description=meta["description"],body=body)
+
+def split_frontmatter(text: str) -> tuple[dict, str]:
+    """Return (metadata dict, body string) for a ----delimited frontmatter file."""
+    if not text.startswith("---\n"):
+        return {}, text
+    front, _, body = text.partition("\n---")   # first --- closes the header
+    return yaml.safe_load(front) or {}, body.lstrip("\n")
+
+@cache
+def load_skill(path: Path) -> Skill:
+    meta, body = split_frontmatter(path.read_text())
+    missing = {"name", "description"} - set(meta)
+    if missing:
+        raise ValueError(f"{path} missing required frontmatter: {missing}")
+    return meta, body
+
+def load_skills(dir:Path)->SkillLibrary
+    library={}
+    skill_files=dir.glob("*/skill.md")
+    for path in skill_files:
+        if path.is_file():
+            meta,_=load_skill(path)
+        library.update({name:SkillLibraryEntry(name=meta["name"],description=meta["description"],path=path)})
+    return library
 
 async def run_skill_tool(tool: SkillCall) -> SkillResult:
     try:
