@@ -17,7 +17,6 @@ from dataclasses import dataclass
 from typing import Self, TypedDict, assert_never, cast
 
 import httpx2
-from httpx2 import AsyncClient
 
 from koding_agent.core.banner import GREY, RESET, rgb
 
@@ -193,7 +192,7 @@ class LlmError(Exception):
     """
 
 
-async def llm_call(client: AsyncClient, messages: list[Message]) -> str:
+async def llm_call(client: httpx2.AsyncClient, messages: list[Message]) -> str:
     """Ask Ollama for the next reply; every failure is raised as LlmError."""
     try:
         response = await client.post(
