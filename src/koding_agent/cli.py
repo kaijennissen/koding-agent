@@ -21,7 +21,6 @@ from koding_agent.banner import print_banner, prompt_text
 from koding_agent.core.agent import (
     DEFAULT_MAX_TURNS,
     MODEL,
-    SYSTEM_PROMPT,
     LlmError,
     Message,
     llm_call,
@@ -29,6 +28,7 @@ from koding_agent.core.agent import (
 )
 from koding_agent.core.colours import RED, RESET
 from koding_agent.core.events import print_event
+from koding_agent.core.prompt import SYSTEM_PROMPT
 from koding_agent.core.tools import RunTool, run_bash_tool
 
 OLLAMA_URL = "http://host.docker.internal:11434"
