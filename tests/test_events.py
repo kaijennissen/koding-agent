@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from fakes import ok
-from koding_agent.agent import (
+from koding_agent.core.agent import (
     GREEN,
     GREY,
     RED,

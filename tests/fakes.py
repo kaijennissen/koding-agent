@@ -1,6 +1,6 @@
 """Test doubles for the core's two seams, LlmCall and RunTool: no network, no subprocess."""
 
-from koding_agent.agent import BashResult, LlmCall, Message
+from koding_agent.core.agent import BashResult, LlmCall, Message
 
 
 def replies(*script: str | Exception) -> LlmCall:

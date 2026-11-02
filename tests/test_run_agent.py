@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from fakes import ok, ok_tool, replies
-from koding_agent.agent import (
+from koding_agent.core.agent import (
     MIXED_ACTIONS_ERROR,
     SYSTEM_PROMPT,
     BashResult,

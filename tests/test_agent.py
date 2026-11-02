@@ -7,7 +7,7 @@ import httpx2
 import pytest
 from httpx2 import AsyncClient
 
-from koding_agent.agent import (
+from koding_agent.core.agent import (
     MIXED_ACTIONS_ERROR,
     MODEL,
     LlmError,

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from koding_agent.agent import (
+from koding_agent.core.agent import (
     BashResult,
     format_observation,
     run_bash_tool,

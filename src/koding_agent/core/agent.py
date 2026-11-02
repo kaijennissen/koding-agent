@@ -19,7 +19,7 @@ from typing import Self, TypedDict, assert_never, cast
 import httpx2
 from httpx2 import AsyncClient
 
-from koding_agent.banner import GREY, RESET, rgb
+from koding_agent.core.banner import GREY, RESET, rgb
 
 RED = rgb("#FF5555")
 GREEN = rgb("#50FA7B")

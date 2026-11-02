@@ -17,7 +17,7 @@ from typing import Literal
 import httpx2
 
 from koding_agent import __version__
-from koding_agent.agent import (
+from koding_agent.core.agent import (
     DEFAULT_MAX_TURNS,
     MODEL,
     RED,
@@ -31,7 +31,7 @@ from koding_agent.agent import (
     run_agent,
     run_bash_tool,
 )
-from koding_agent.banner import print_banner, prompt_text
+from koding_agent.core.banner import print_banner, prompt_text
 
 OLLAMA_URL = "http://host.docker.internal:11434"
 
