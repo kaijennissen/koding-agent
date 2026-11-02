@@ -1,7 +1,7 @@
 """The banner shows name, version and model, and stays plain without colour."""
 
 from koding_agent import __version__
-from koding_agent.core.banner import render_banner, render_prompt
+from koding_agent.banner import render_banner, render_prompt
 
 
 def test_plain_banner_has_name_version_and_model() -> None:

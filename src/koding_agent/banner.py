@@ -11,21 +11,14 @@ import os
 import sys
 
 from koding_agent import __version__
-
-
-def rgb(hex_color: str) -> str:
-    """24-bit (truecolor) foreground escape for a '#RRGGBB' colour."""
-    r, g, b = (int(hex_color[i : i + 2], 16) for i in (1, 3, 5))
-    return f"\033[38;2;{r};{g};{b}m"
-
-
-MAGENTA = rgb("#FF00D4")  # k
-BLUE = rgb("#006FFF")  # a
-LIME = rgb("#A9FF17")  # i
-DIM = "\033[2m"
-GREY = rgb("#888888")  # secondary info (tool calls)
-BOLD = "\033[1m"
-RESET = "\033[0m"
+from koding_agent.core.colours import (
+    BLUE,
+    BOLD,
+    DIM,
+    LIME,
+    MAGENTA,
+    RESET,
+)
 
 
 def use_color() -> bool:

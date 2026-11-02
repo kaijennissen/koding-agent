@@ -15,6 +15,7 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
 from textual.widgets import Footer, Static, TextArea
 
+from koding_agent.banner import render_banner
 from koding_agent.core.agent import (
     DEFAULT_MAX_TURNS,
     SYSTEM_PROMPT,
@@ -33,7 +34,6 @@ from koding_agent.core.agent import (
 from koding_agent.core.agent import (
     Message as ChatMessage,
 )
-from koding_agent.core.banner import render_banner
 
 DEFAULT_MODEL = "unknown-model"
 

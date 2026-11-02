@@ -18,12 +18,7 @@ from typing import Self, TypedDict, assert_never, cast
 
 import httpx2
 
-from koding_agent.core.banner import GREY, RESET, rgb
-
-RED = rgb("#FF5555")
-GREEN = rgb("#50FA7B")
-YELLOW = rgb("#FFCC00")
-
+from koding_agent.core.colours import GREEN, GREY, RED, RESET, YELLOW
 
 # OLLAMA_ENDPOINT = "http://localhost:11434/api/chat"
 OLLAMA_ENDPOINT = "http://host.docker.internal:11434/api/chat"

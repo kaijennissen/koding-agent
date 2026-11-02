@@ -9,11 +9,6 @@ import pytest
 
 from fakes import ok
 from koding_agent.core.agent import (
-    GREEN,
-    GREY,
-    RED,
-    RESET,
-    YELLOW,
     BashCall,
     BashResult,
     Event,
@@ -25,6 +20,7 @@ from koding_agent.core.agent import (
     print_event,
     run_tool,
 )
+from koding_agent.core.colours import GREEN, GREY, RED, RESET, YELLOW
 
 LS = BashCall(id="1", cmd="ls")
 
