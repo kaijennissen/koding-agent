@@ -14,6 +14,7 @@ import signal
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Self, TypedDict, assert_never, cast
 
 import httpx2
@@ -122,37 +123,70 @@ class BashResult:
     def timeout(cls, cmd: str, stdout: str = "", stderr: str = "") -> Self:
         return cls(cmd, stdout, stderr, returncode=None, timed_out=True)
 
+    @property
+    def status(self) -> str:
+        if self.timed_out or self.returncode != 0:
+            return "failed"
+        return "ok"
+
+
+@dataclass(frozen=True)
+class SkillResult:
+    name: str
+    body: str
+    returncode: int | None
+
+    @property
+    def status(self) -> str:
+        if self.returncode != 0:
+            return "failed"
+        return "ok"
+
 
 @dataclass(frozen=True, kw_only=True)
 class BashCall:
     id: str
     cmd: str
 
+    @property
+    def display(self) -> str:
+        return self.cmd.replace("\n", " ")
+
 
 @dataclass(frozen=True, kw_only=True)
 class SkillCall:
     id: str
     name: str
+    skills_dir: Path
+
+    @property
+    def display(self) -> str:
+        return self.name
+
+    @property
+    def skill_path(self) -> Path:
+        return self.skills_dir.joinpath(self.name).joinpath("SKILL.md")
 
 
-type ToolCall = BashCall
-type RunTool = Callable[[str], Awaitable[BashResult]]  # cmd -> result
+type ToolCall = BashCall | SkillCall
+type ToolResult = BashResult | SkillResult
+type RunTool = Callable[[str], Awaitable[ToolResult]]  # cmd -> result
 
 
 @dataclass(frozen=True)
 class ToolStart:
-    call: ToolCall
+    tool: ToolCall
 
 
 @dataclass(frozen=True)
 class ToolEnd:
-    call: ToolCall
-    result: BashResult
+    tool: ToolCall
+    result: ToolResult
 
 
 @dataclass(frozen=True)
 class ToolCancelled:
-    call: ToolCall
+    tool: ToolCall
 
 
 type Event = ToolStart | ToolEnd | ToolCancelled | TurnStart
@@ -170,7 +204,7 @@ def create_uuid():
     return str(uuid.uuid4()).split("-")[0]
 
 
-def format_observation(result: BashResult) -> str:
+def format_bash_result(result: BashResult) -> str:
     """Turn a BashResult into the text the model reads."""
     if result.timed_out:
         return (
@@ -231,7 +265,12 @@ def parse_action(text: str) -> dict[str, list[str]]:
     """
     exit_bodies = parse_xml("exit", text)
     bash_bodies = parse_xml("bash", text)
-    if exit_bodies and bash_bodies:
+    skill_bodies = parse_xml("skill", text)
+    if (
+        (exit_bodies and bash_bodies)
+        or (exit_bodies and skill_bodies)
+        or (exit_bodies and skill_bodies)
+    ):
         # Mixing the two action types is not allowed. Signal the mistake as
         # an error so the loop can feed it back and the model can retry,
         # rather than silently terminating.
@@ -240,6 +279,8 @@ def parse_action(text: str) -> dict[str, list[str]]:
         return {"exit": exit_bodies}
     if bash_bodies:
         return {"bash": bash_bodies}
+    if skill_bodies:
+        return {"skill": skill_bodies}
     return {"error": ["Couldn't parse any action. Please retry!"]}
 
 
@@ -247,24 +288,37 @@ def print_event(event: Event) -> None:
     match event:
         case TurnStart(turn=turn, max_turns=max_turns):
             print(f"{GREY}Turn: {turn}/{max_turns}{RESET}")
-        case ToolStart(call=BashCall(cmd=cmd)):
+        case ToolStart(tool=BashCall(cmd=cmd)):
             print(f"{YELLOW}running: {cmd}{RESET}")
 
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(returncode=0)):
+        case ToolEnd(tool=BashCall(cmd=cmd), result=BashResult(returncode=0)):
             print(f"{GREEN}success: {cmd}{RESET}")
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(timed_out=True)):
+        case ToolEnd(tool=BashCall(cmd=cmd), result=BashResult(timed_out=True)):
             print(f"{RED}timeout: {cmd}{RESET}")
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(returncode=code)):
+        case ToolEnd(tool=BashCall(cmd=cmd), result=BashResult(returncode=code)):
             print(f"{RED}failure (exit {code}): {cmd}{RESET}")
-        case ToolCancelled(call=BashCall(cmd=cmd)):
+        case ToolCancelled(tool=BashCall(cmd=cmd)):
             print(f"{RED}cancelled: {cmd}{RESET}")
         case _:
             assert_never(event)
 
 
-async def run_bash_tool(cmd: str, *, timeout: float) -> BashResult:
+async def run_skill_tool(tool: SkillCall) -> SkillResult:
+    try:
+        with open(tool.skill_path, "rb") as f:
+            skill_body = f.read()
+        return SkillResult(name=tool.name, body=skill_body, returncode=0)
+    except FileNotFoundError:
+        return SkillResult(
+            name=tool.name, body=f"File {tool.skill_path} not found", returncode=1
+        )
+    except Exception as e:
+        return SkillResult(name=tool.name, body=e, returncode=1)
+
+
+async def run_bash_tool(tool: BashCall, *, timeout: float) -> BashResult:
     proc = await asyncio.create_subprocess_shell(
-        cmd,
+        tool.cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,
@@ -274,14 +328,14 @@ async def run_bash_tool(cmd: str, *, timeout: float) -> BashResult:
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return BashResult.completed(
-            cmd=cmd,
+            cmd=tool.cmd,
             stdout=stdout.decode(errors="replace"),
             stderr=stderr.decode(errors="replace"),
             returncode=proc.returncode,
         )
 
     except TimeoutError:
-        return BashResult.timeout(cmd)
+        return BashResult.timeout(tool.cmd)
 
     finally:
         try:
@@ -306,17 +360,17 @@ def emit(on_event: OnEvent, event: Event) -> None:
 
 
 async def run_tool(
-    tool_call: ToolCall,
+    tool_call: ToolCall,  # could be BashCall or SkillCall; function shouldn't know anything about the Call-attributes
     tool_fn: RunTool,
     on_event: OnEvent = _ignore,
-) -> BashResult:
-    emit(on_event, ToolStart(call=tool_call))
+) -> ToolResult:
+    emit(on_event, ToolStart(tool=tool_call))
     try:
-        result = await tool_fn(tool_call.cmd)
+        result = await tool_fn(tool_call)
     except asyncio.CancelledError:
-        emit(on_event, ToolCancelled(call=tool_call))
+        emit(on_event, ToolCancelled(tool=tool_call))
         raise
-    emit(on_event, ToolEnd(call=tool_call, result=result))
+    emit(on_event, ToolEnd(tool=tool_call, result=result))
     return result
 
 
@@ -324,7 +378,7 @@ async def run_agent(
     messages: list[Message],
     max_turns: int,
     call: LlmCall,
-    tool_fn: RunTool,
+    skills_dir: Path,
     on_event: OnEvent = _ignore,
 ) -> tuple[str, list[Message]]:
     for turn in range(max_turns):
@@ -345,19 +399,33 @@ async def run_agent(
                 [assistant_msg, {"role": "user", "content": action["error"][0]}]
             )
             continue
-
+        if "skill" in action:
+            tool_calls = [
+                SkillCall(id=create_uuid(), name=cmd, skills_dir=skills_dir)
+                for cmd in action["skill"]
+            ]
+            results = [
+                run_tool(tool_call, tool_fn=run_skill_tool, on_event=on_event)
+                for tool_call in tool_calls
+            ]
+            observations = results  # work on formatting later
+            messages.extend(
+                [
+                    assistant_msg,
+                    {"role": "user", "content": "\n\n".join(observations)},
+                ]
+            )
         if "bash" in action:
             # One or more commands, executed in turn; every result is fed
             # back together in a single observation message.
             tool_calls = [BashCall(id=create_uuid(), cmd=cmd) for cmd in action["bash"]]
             results = await asyncio.gather(
                 *(
-                    run_tool(tool_call, tool_fn=tool_fn, on_event=on_event)
+                    run_tool(tool_call, tool_fn=run_bash_tool, on_event=on_event)
                     for tool_call in tool_calls
                 )
             )
-
-            observations = [format_observation(result) for result in results]
+            observations = [format_bash_result(result) for result in results]
             messages.extend(
                 [
                     assistant_msg,

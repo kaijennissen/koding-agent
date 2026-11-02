@@ -12,6 +12,7 @@ import asyncio
 import sys
 from collections.abc import Sequence
 from functools import partial
+from pathlib import Path
 from typing import Literal
 
 import httpx2
@@ -25,11 +26,9 @@ from koding_agent.agent import (
     SYSTEM_PROMPT,
     LlmError,
     Message,
-    RunTool,
     llm_call,
     print_event,
     run_agent,
-    run_bash_tool,
 )
 from koding_agent.banner import print_banner, prompt_text
 
@@ -85,7 +84,7 @@ def select_mode(args: argparse.Namespace) -> Mode:
     return "plain" if args.plain else "tui"
 
 
-async def run_headless(prompt: str, max_turns: int, tool_fn: RunTool) -> None:
+async def run_headless(prompt: str, max_turns: int, skills_dir: Path) -> None:
     async with ollama_client() as client:
         messages: list[Message] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -96,7 +95,6 @@ async def run_headless(prompt: str, max_turns: int, tool_fn: RunTool) -> None:
                 messages,
                 max_turns=max_turns,
                 call=partial(llm_call, client),
-                tool_fn=tool_fn,
                 on_event=print_event,
             )
         except LlmError as e:
@@ -104,7 +102,7 @@ async def run_headless(prompt: str, max_turns: int, tool_fn: RunTool) -> None:
         print("\n" + answer + "\n")
 
 
-async def run_plain(max_turns: int, tool_fn: RunTool) -> None:
+async def run_plain(max_turns: int, skills_dir: Path) -> None:
     async with ollama_client() as client:
         call = partial(llm_call, client)
         messages: list[Message] = [{"role": "system", "content": SYSTEM_PROMPT}]
@@ -119,7 +117,7 @@ async def run_plain(max_turns: int, tool_fn: RunTool) -> None:
                     messages,
                     max_turns=max_turns,
                     call=call,
-                    tool_fn=tool_fn,
+                    skills_dir=skills_dir,
                     on_event=print_event,
                 )
             except LlmError as e:
@@ -129,16 +127,16 @@ async def run_plain(max_turns: int, tool_fn: RunTool) -> None:
             print("\n" + answer + "\n")
 
 
-async def run_tui(max_turns: int, tool_fn: RunTool, first_prompt: str | None) -> None:
+async def run_tui(max_turns: int, first_prompt: str | None, skills_dir: Path) -> None:
     from koding_agent.tui.app import AgentApp  # keeps Textual off the -p path
 
     async with ollama_client() as client:
         app = AgentApp(
             partial(llm_call, client),
-            tool_fn,
             model=MODEL,
             max_turns=max_turns,
             first_prompt=first_prompt,
+            skills_dir=skills_dir,
         )
         await app.run_async()
 
@@ -148,16 +146,28 @@ def cli(argv: Sequence[str] | None = None) -> None:
     tool_fn = partial(run_bash_tool, timeout=args.timeout)
     match select_mode(args):
         case "headless":
-            asyncio.run(run_headless(args.headless_prompt, args.max_turns, tool_fn))
+            asyncio.run(
+                run_headless(
+                    prompt=args.headless_prompt,
+                    max_turns=args.max_turns,
+                    skills_dir=args.skills_dir,
+                )
+            )
         case "plain":
-            asyncio.run(run_plain(args.max_turns, tool_fn))
+            asyncio.run(run_plain(max_turns=args.max_turns, skills_dir=args.skills_dir))
         case "tui":
             if not (sys.stdin.isatty() and sys.stdout.isatty()):
                 sys.exit(
                     "The TUI needs an interactive terminal. "
                     "Use -p PROMPT for a one-shot run, or --plain for the REPL."
                 )
-            asyncio.run(run_tui(args.max_turns, tool_fn, args.prompt))
+            asyncio.run(
+                run_tui(
+                    max_turns=args.max_turns,
+                    first_prompt=args.prompt,
+                    skills_dir=args.skills_dir,
+                )
+            )
 
 
 if __name__ == "__main__":

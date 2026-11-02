@@ -6,6 +6,7 @@ worker on Textual's event loop. The core reports progress through `on_event`;
 update the widgets.
 """
 
+from pathlib import Path
 from typing import Literal, assert_never
 
 from rich.text import Text
@@ -64,14 +65,14 @@ class ToolRow(Horizontal):
     ToolRow.cancelled .bullet { color: $text-muted; }
     """
 
-    def __init__(self, call: ToolCall) -> None:
+    def __init__(self, tool: ToolCall) -> None:
         super().__init__(classes="running")
-        self.call = call
+        self.tool = tool
         self.status: Status = "running"
 
     def compose(self) -> ComposeResult:
         yield Static("●", classes="bullet")
-        yield Static(self.call.cmd.replace("\n", " "), classes="cmd", markup=False)
+        yield Static(self.tool.display, classes="cmd", markup=False)
 
     def set_status(self, status: Status) -> None:
         self.remove_class(self.status)
@@ -111,22 +112,22 @@ class PromptArea(TextArea):
 
 
 class ToolStarted(Message):
-    def __init__(self, call: ToolCall) -> None:
+    def __init__(self, tool: ToolCall) -> None:
         super().__init__()
-        self.call = call
+        self.tool = tool
 
 
 class ToolFinished(Message):
-    def __init__(self, call: ToolCall, result: BashResult) -> None:
+    def __init__(self, tool: ToolCall, result: BashResult) -> None:
         super().__init__()
-        self.call = call
+        self.tool = tool
         self.result = result
 
 
 class ToolAborted(Message):
-    def __init__(self, call: ToolCall) -> None:
+    def __init__(self, tool: ToolCall) -> None:
         super().__init__()
-        self.call = call
+        self.tool = tool
 
 
 class TurnStarted(Message):
@@ -167,6 +168,7 @@ class AgentApp(App[None]):
         self,
         call: LlmCall,
         tool_fn: RunTool,
+        skills_dir: Path,
         model: str = DEFAULT_MODEL,
         max_turns: int = DEFAULT_MAX_TURNS,
         first_prompt: str | None = None,
@@ -177,11 +179,12 @@ class AgentApp(App[None]):
         self.tool_fn = tool_fn
         self.model = model
         self.max_turns = max_turns
+        self.skills_dir = skills_dir
         self.messages: list[ChatMessage] = [
             {"role": "system", "content": SYSTEM_PROMPT}
         ]
         self.busy = False
-        self.rows: dict[str, ToolRow] = {}  # call.id -> row
+        self.rows: dict[str, ToolRow] = {}  # tool.id -> row
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
@@ -209,28 +212,28 @@ class AgentApp(App[None]):
     def forward_event(self, event: Event) -> None:
         """The core's OnEvent callback: translate to a message and return at once."""
         match event:
-            case ToolStart(call):
-                self.post_message(ToolStarted(call))
-            case ToolEnd(call, result):
-                self.post_message(ToolFinished(call, result))
-            case ToolCancelled(call):
-                self.post_message(ToolAborted(call))
+            case ToolStart(tool):
+                self.post_message(ToolStarted(tool))
+            case ToolEnd(tool, result):
+                self.post_message(ToolFinished(tool, result))
+            case ToolCancelled(tool):
+                self.post_message(ToolAborted(tool))
             case TurnStart(turn, max_turns):
                 self.post_message(TurnStarted(turn, max_turns))
             case _:
                 assert_never(event)
 
     async def on_tool_started(self, message: ToolStarted) -> None:
-        row = ToolRow(message.call)
-        self.rows[message.call.id] = row
+        row = ToolRow(message.tool)
+        self.rows[message.tool.id] = row
         await self.query_one("#tools", ToolPanel).mount(row)
 
     def on_tool_finished(self, message: ToolFinished) -> None:
         # A missing id means an end without a start: a bug, so let it raise.
-        self.rows[message.call.id].set_status(status_for(message.result))
+        self.rows[message.tool.id].set_status(status_for(message.result))
 
     def on_tool_aborted(self, message: ToolAborted) -> None:
-        self.rows[message.call.id].set_status("cancelled")
+        self.rows[message.tool.id].set_status("cancelled")
 
     def on_turn_started(self, message: TurnStarted) -> None:
         self.query_one("#status", Static).update(
@@ -265,10 +268,10 @@ class AgentApp(App[None]):
         """Worker body: run the agent on the history and show its answer or error."""
         try:
             answer, _ = await run_agent(
-                self.messages,
-                self.max_turns,
-                self.call,
-                self.tool_fn,
+                messages=self.messages,
+                max_turns=self.max_turns,
+                call=self.call,
+                skills_dir=self.skills_dir,
                 on_event=self.forward_event,
             )
             await self.add_message(answer, "assistant")
