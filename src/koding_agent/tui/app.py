@@ -18,6 +18,7 @@ from textual.widgets import Footer, Static, TextArea
 from koding_agent.banner import render_banner
 from koding_agent.core.agent import (
     DEFAULT_MAX_TURNS,
+    SYSTEM_PROMPT,
     LlmCall,
     LlmError,
     run_agent,
@@ -32,7 +33,6 @@ from koding_agent.core.events import (
     ToolStart,
     TurnStart,
 )
-from koding_agent.core.prompt import SYSTEM_PROMPT
 from koding_agent.core.tool_types import BashResult, ToolCall
 from koding_agent.core.tools import RunTool
 

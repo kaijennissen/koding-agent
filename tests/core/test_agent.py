@@ -12,6 +12,7 @@ from fakes import ok, ok_tool, replies
 from koding_agent.core.agent import (
     MIXED_ACTIONS_ERROR,
     MODEL,
+    SYSTEM_PROMPT,
     LlmError,
     Message,
     llm_call,
@@ -20,7 +21,6 @@ from koding_agent.core.agent import (
     run_agent,
 )
 from koding_agent.core.events import Event, ToolCancelled, ToolEnd, ToolStart, TurnStart
-from koding_agent.core.prompt import SYSTEM_PROMPT
 from koding_agent.core.tool_types import BashResult
 from koding_agent.core.tools import format_observation
 

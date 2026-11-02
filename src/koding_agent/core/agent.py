@@ -17,6 +17,7 @@ from koding_agent.core.events import (
     OnEvent,
     TurnStart,
 )
+from koding_agent.core.prompt import SYSTEM_PROMPT_TEMPLATE
 from koding_agent.core.tool_types import BashCall
 from koding_agent.core.tools import (
     RunTool,
@@ -32,6 +33,12 @@ OLLAMA_ENDPOINT = "http://host.docker.internal:11434/api/chat"
 MODEL = "qwen3.8:27b-mlx"
 
 DEFAULT_MAX_TURNS = 25  # safety net; the agent is meant to stop itself with <exit>
+MAX_OUTPUT_CHARS = 2000  # tool output is context we pay for on every later turn
+COMMAND_TIMEOUT = 120  # seconds; a wall-clock limit per command, not per loop
+
+SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATE.format(
+    command_timeout=COMMAND_TIMEOUT, max_output_chars=MAX_OUTPUT_CHARS
+)
 
 MIXED_ACTIONS_ERROR = (
     "Invalid action: a turn may contain either a single <exit> tag "
