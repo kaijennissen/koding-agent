@@ -6,6 +6,7 @@ from contextlib import AbstractContextManager, nullcontext
 from typing import Any
 
 import pytest
+from koding_agent.core.tool_types import BashCall, BashResult
 
 from fakes import ok
 from koding_agent.core.colours import GREEN, GREY, RED, RESET, YELLOW
@@ -17,7 +18,7 @@ from koding_agent.core.events import (
     TurnStart,
     print_event,
 )
-from koding_agent.core.tools import BashCall, BashResult, emit
+from koding_agent.core.tools import emit
 
 LS = BashCall(id="1", cmd="ls")
 

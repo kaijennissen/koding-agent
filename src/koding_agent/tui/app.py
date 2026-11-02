@@ -33,7 +33,8 @@ from koding_agent.core.events import (
     ToolStart,
     TurnStart,
 )
-from koding_agent.core.tools import BashResult, RunTool, ToolCall
+from koding_agent.core.tool_types import BashResult, ToolCall
+from koding_agent.core.tools import RunTool
 
 DEFAULT_MODEL = "unknown-model"
 

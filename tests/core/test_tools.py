@@ -5,12 +5,11 @@ import time
 from pathlib import Path
 
 import pytest
+from koding_agent.core.tool_types import BashCall, BashResult
 
 from fakes import ok
 from koding_agent.core.events import Event, ToolCancelled, ToolEnd, ToolStart
 from koding_agent.core.tools import (
-    BashCall,
-    BashResult,
     format_observation,
     run_bash_tool,
     run_tool,

@@ -9,6 +9,7 @@ import asyncio
 from collections.abc import AsyncIterator
 
 import pytest
+from koding_agent.core.tool_types import BashCall, BashResult
 from textual.app import App, ComposeResult
 from textual.color import Color
 from textual.containers import VerticalScroll
@@ -24,7 +25,6 @@ from koding_agent.core.events import (
     ToolStart,
     TurnStart,
 )
-from koding_agent.core.tools import BashCall, BashResult
 from koding_agent.tui.app import (
     AgentApp,
     PromptArea,

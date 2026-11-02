@@ -7,6 +7,7 @@ from collections.abc import Callable
 import httpx2
 import pytest
 from httpx2 import AsyncClient
+from koding_agent.core.tool_types import BashResult
 
 from fakes import ok, ok_tool, replies
 from koding_agent.core.agent import (
@@ -21,7 +22,7 @@ from koding_agent.core.agent import (
     run_agent,
 )
 from koding_agent.core.events import Event, ToolCancelled, ToolEnd, ToolStart, TurnStart
-from koding_agent.core.tools import BashResult, format_observation
+from koding_agent.core.tools import format_observation
 
 
 @pytest.mark.parametrize(

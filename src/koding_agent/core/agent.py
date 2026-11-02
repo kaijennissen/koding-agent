@@ -12,13 +12,13 @@ from collections.abc import Awaitable, Callable
 from typing import TypedDict, cast
 
 import httpx2
+from koding_agent.core.tool_types import BashCall
 
 from koding_agent.core.events import (
     OnEvent,
     TurnStart,
 )
 from koding_agent.core.tools import (
-    BashCall,
     RunTool,
     _ignore,
     create_uuid,
