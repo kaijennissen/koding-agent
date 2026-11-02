@@ -1,26 +1,26 @@
 """Regression tests for the agent's XML action parsing and the LLM call."""
 
 import asyncio
-<<<<<<< HEAD:tests/core/test_agent.py
 import json
 from collections.abc import Callable
-=======
 from pathlib import Path
->>>>>>> origin/main:tests/test_run_agent.py
 
 import httpx2
 import pytest
 from httpx2 import AsyncClient
 
 from fakes import ok, ok_tool, replies
+from koding_agent.cli import parse_args
 from koding_agent.core.agent import (
     MIXED_ACTIONS_ERROR,
     MODEL,
     SYSTEM_PROMPT,
-<<<<<<< HEAD:tests/core/test_agent.py
+    Context,
     LlmError,
     Message,
+    build_system_prompt,
     llm_call,
+    load_context,
     parse_action,
     parse_xml,
     run_agent,
@@ -160,24 +160,6 @@ async def test_llm_call_turns_failures_into_llm_error(
     async with fake_ollama(handler) as client:
         with pytest.raises(LlmError, match=expected):
             await llm_call(client, [])
-
-=======
-    BashResult,
-    Context,
-    Event,
-    LlmError,
-    Message,
-    ToolCancelled,
-    ToolEnd,
-    ToolStart,
-    TurnStart,
-    build_system_prompt,
-    format_observation,
-    load_context,
-    run_agent,
-)
-from koding_agent.cli import parse_args
->>>>>>> origin/main:tests/test_run_agent.py
 
 BASH_LS = "<action><bash>ls</bash></action>"
 EXIT_DONE = "<action><exit>done</exit></action>"

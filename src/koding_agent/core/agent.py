@@ -9,6 +9,8 @@ emits <exit> or the turn budget runs out.
 import asyncio
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from pathlib import Path
 from typing import TypedDict, cast
 
 import httpx2
@@ -39,6 +41,29 @@ COMMAND_TIMEOUT = 120  # seconds; a wall-clock limit per command, not per loop
 SYSTEM_PROMPT = SYSTEM_PROMPT_TEMPLATE.format(
     command_timeout=COMMAND_TIMEOUT, max_output_chars=MAX_OUTPUT_CHARS
 )
+
+
+@dataclass(frozen=True)
+class Context:
+    path: Path
+    text: str
+
+
+def load_context(root: Path | None = None) -> Context | None:
+    """Find AGENTS.md (any casing) directly in `root`; None if absent or empty."""
+    root = root or Path.cwd()
+    for path in sorted(root.iterdir()):
+        if path.is_file() and path.name.lower() == "agents.md":
+            text = path.read_text(encoding="utf-8").strip()
+            return Context(path.resolve(), text) if text else None
+    return None
+
+
+def build_system_prompt(context: Context | None = None) -> str:
+    if context is None:
+        return SYSTEM_PROMPT
+    return f"{SYSTEM_PROMPT}\n\n# Project Context\n\n## {context.path}\n\n{context.text}\n"
+
 
 MIXED_ACTIONS_ERROR = (
     "Invalid action: a turn may contain either a single <exit> tag "

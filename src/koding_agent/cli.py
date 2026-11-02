@@ -21,23 +21,12 @@ from koding_agent.banner import print_banner, prompt_text
 from koding_agent.core.agent import (
     DEFAULT_MAX_TURNS,
     MODEL,
-<<<<<<< HEAD
-    SYSTEM_PROMPT,
-    LlmError,
-    Message,
-    llm_call,
-=======
-    RED,
-    RESET,
     Context,
     LlmError,
     Message,
-    RunTool,
     build_system_prompt,
     llm_call,
     load_context,
-    print_event,
->>>>>>> origin/main
     run_agent,
 )
 from koding_agent.core.colours import RED, RESET
