@@ -1,8 +1,12 @@
 """Regression tests for the agent's XML action parsing and the LLM call."""
 
 import asyncio
+<<<<<<< HEAD:tests/core/test_agent.py
 import json
 from collections.abc import Callable
+=======
+from pathlib import Path
+>>>>>>> origin/main:tests/test_run_agent.py
 
 import httpx2
 import pytest
@@ -13,6 +17,7 @@ from koding_agent.core.agent import (
     MIXED_ACTIONS_ERROR,
     MODEL,
     SYSTEM_PROMPT,
+<<<<<<< HEAD:tests/core/test_agent.py
     LlmError,
     Message,
     llm_call,
@@ -156,6 +161,23 @@ async def test_llm_call_turns_failures_into_llm_error(
         with pytest.raises(LlmError, match=expected):
             await llm_call(client, [])
 
+=======
+    BashResult,
+    Context,
+    Event,
+    LlmError,
+    Message,
+    ToolCancelled,
+    ToolEnd,
+    ToolStart,
+    TurnStart,
+    build_system_prompt,
+    format_observation,
+    load_context,
+    run_agent,
+)
+from koding_agent.cli import parse_args
+>>>>>>> origin/main:tests/test_run_agent.py
 
 BASH_LS = "<action><bash>ls</bash></action>"
 EXIT_DONE = "<action><exit>done</exit></action>"
@@ -306,3 +328,32 @@ class TestRunAgent:
             ("start", "b"),
         ]
         assert history == before
+
+
+@pytest.mark.parametrize("name", ["AGENTS.md", "agents.md", "Agents.MD"])
+def test_load_context_matches_any_casing(tmp_path: Path, name: str) -> None:
+    (tmp_path / name).write_text("be nice\n")
+    ctx = load_context(tmp_path)
+    assert ctx == Context(tmp_path / name, "be nice")
+
+
+@pytest.mark.parametrize("content", [None, "", "  \n"])
+def test_load_context_absent_or_empty(tmp_path: Path, content: str | None) -> None:
+    if content is not None:
+        (tmp_path / "AGENTS.md").write_text(content)
+    assert load_context(tmp_path) is None
+
+
+@pytest.mark.parametrize("with_context", [False, True])
+def test_system_prompt_includes_context(tmp_path: Path, with_context: bool) -> None:
+    path = tmp_path / "AGENTS.md"
+    prompt = build_system_prompt(Context(path, "be nice") if with_context else None)
+    assert prompt.startswith(SYSTEM_PROMPT)
+    assert (f"## {path}" in prompt and "be nice" in prompt) == with_context
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"), [([], False), (["-nc"], True), (["--no-context"], True)]
+)
+def test_no_context_flag(argv: list[str], expected: bool) -> None:
+    assert parse_args(argv).no_context is expected

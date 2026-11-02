@@ -21,10 +21,23 @@ from koding_agent.banner import print_banner, prompt_text
 from koding_agent.core.agent import (
     DEFAULT_MAX_TURNS,
     MODEL,
+<<<<<<< HEAD
     SYSTEM_PROMPT,
     LlmError,
     Message,
     llm_call,
+=======
+    RED,
+    RESET,
+    Context,
+    LlmError,
+    Message,
+    RunTool,
+    build_system_prompt,
+    llm_call,
+    load_context,
+    print_event,
+>>>>>>> origin/main
     run_agent,
 )
 from koding_agent.core.colours import RED, RESET
@@ -67,6 +80,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="seconds a bash command may run before it is killed (default: %(default)s)",
     )
     parser.add_argument(
+        "-nc",
+        "--no-context",
+        action="store_true",
+        help="do not load AGENTS.md from the current directory",
+    )
+    parser.add_argument(
         "-v", "--version", action="version", version=f"%(prog)s {__version__}"
     )
     args = parser.parse_args(argv)
@@ -83,10 +102,12 @@ def select_mode(args: argparse.Namespace) -> Mode:
     return "plain" if args.plain else "tui"
 
 
-async def run_headless(prompt: str, max_turns: int, tool_fn: RunTool) -> None:
+async def run_headless(
+    prompt: str, max_turns: int, tool_fn: RunTool, context: Context | None = None
+) -> None:
     async with ollama_client() as client:
         messages: list[Message] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_prompt(context)},
             {"role": "user", "content": prompt},
         ]
         try:
@@ -102,11 +123,15 @@ async def run_headless(prompt: str, max_turns: int, tool_fn: RunTool) -> None:
         print("\n" + answer + "\n")
 
 
-async def run_plain(max_turns: int, tool_fn: RunTool) -> None:
+async def run_plain(
+    max_turns: int, tool_fn: RunTool, context: Context | None = None
+) -> None:
     async with ollama_client() as client:
         call = partial(llm_call, client)
-        messages: list[Message] = [{"role": "system", "content": SYSTEM_PROMPT}]
-        print_banner(MODEL)
+        messages: list[Message] = [
+            {"role": "system", "content": build_system_prompt(context)}
+        ]
+        print_banner(MODEL, context.path.name if context else None)
         while True:
             prompt = input(prompt_text())
             if prompt == "exit":
@@ -127,7 +152,12 @@ async def run_plain(max_turns: int, tool_fn: RunTool) -> None:
             print("\n" + answer + "\n")
 
 
-async def run_tui(max_turns: int, tool_fn: RunTool, first_prompt: str | None) -> None:
+async def run_tui(
+    max_turns: int,
+    tool_fn: RunTool,
+    first_prompt: str | None,
+    context: Context | None = None,
+) -> None:
     from koding_agent.tui.app import AgentApp  # keeps Textual off the -p path
 
     async with ollama_client() as client:
@@ -137,6 +167,7 @@ async def run_tui(max_turns: int, tool_fn: RunTool, first_prompt: str | None) ->
             model=MODEL,
             max_turns=max_turns,
             first_prompt=first_prompt,
+            context=context,
         )
         await app.run_async()
 
@@ -144,18 +175,21 @@ async def run_tui(max_turns: int, tool_fn: RunTool, first_prompt: str | None) ->
 def cli(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     tool_fn = partial(run_bash_tool, timeout=args.timeout)
+    context = None if args.no_context else load_context()
     match select_mode(args):
         case "headless":
-            asyncio.run(run_headless(args.headless_prompt, args.max_turns, tool_fn))
+            asyncio.run(
+                run_headless(args.headless_prompt, args.max_turns, tool_fn, context)
+            )
         case "plain":
-            asyncio.run(run_plain(args.max_turns, tool_fn))
+            asyncio.run(run_plain(args.max_turns, tool_fn, context))
         case "tui":
             if not (sys.stdin.isatty() and sys.stdout.isatty()):
                 sys.exit(
                     "The TUI needs an interactive terminal. "
                     "Use -p PROMPT for a one-shot run, or --plain for the REPL."
                 )
-            asyncio.run(run_tui(args.max_turns, tool_fn, args.prompt))
+            asyncio.run(run_tui(args.max_turns, tool_fn, args.prompt, context))
 
 
 if __name__ == "__main__":
