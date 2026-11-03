@@ -8,7 +8,7 @@ import pytest
 
 from fakes import replies
 from koding_agent.agent import (
-    COMMAND_TIMEOUT,
+    DEFAULT_COMMAND_TIMEOUT,
     MIXED_ACTIONS_ERROR,
     SKILLS_PROMPT,
     BashResult,
@@ -189,6 +189,11 @@ class TestRunAgent:
 
         with pytest.raises(asyncio.CancelledError):
             await task
+        # gather re-raises as soon as the first tool is cancelled; the other may
+        # still be killing its process, so its end event can arrive a tick later.
+        async with asyncio.timeout(1):
+            while len(tool_log(events)) < 4:
+                await asyncio.sleep(0.01)
         assert sorted(tool_log(events)) == [
             ("cancelled", a),
             ("cancelled", b),
@@ -221,7 +226,8 @@ def test_system_prompt_includes_context(tmp_path: Path, with_context: bool) -> N
 
 
 @pytest.mark.parametrize(
-    "command_timeout,shown", [(COMMAND_TIMEOUT, "120s"), (7, "7s"), (2.5, "2.5s")]
+    "command_timeout,shown",
+    [(DEFAULT_COMMAND_TIMEOUT, "120s"), (7, "7s"), (2.5, "2.5s")],
 )
 def test_system_prompt_announces_the_command_timeout(
     command_timeout: float, shown: str

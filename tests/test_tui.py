@@ -343,7 +343,7 @@ class TestTurn:
         assert [m["content"] for m in app.messages[1:]] == ["a", EXIT_HI, "b", EXIT_HI]
 
     async def test_first_prompt_is_submitted_on_start(self) -> None:
-        app = AgentApp(replies(EXIT_HI), first_prompt="hello")
+        app = AgentApp(replies(EXIT_HI), model=MODEL, first_prompt="hello")
         async with app.run_test() as pilot:
             await settle(app, pilot)
             assert texts(app, ".message.user") == ["> hello"]

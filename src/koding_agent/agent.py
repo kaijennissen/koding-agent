@@ -29,13 +29,13 @@ GREEN = rgb("#50FA7B")
 YELLOW = rgb("#FFCC00")
 
 
-# OLLAMA_ENDPOINT = "http://localhost:11434/api/chat"
-OLLAMA_ENDPOINT = "http://host.docker.internal:11434/api/chat"
-MODEL = "qwen3.8:27b-mlx"
-
+# DEFAULT_* values can be overridden per run (CLI flags); the rest are fixed.
+DEFAULT_MODEL = "qwen3.8:27b-mlx"
 DEFAULT_MAX_TURNS = 25  # safety net; the agent is meant to stop itself with <exit>
 MAX_OUTPUT_CHARS = 2000  # tool output is context we pay for on every later turn
-COMMAND_TIMEOUT = 120  # default seconds; a wall-clock limit per command, not per loop
+DEFAULT_COMMAND_TIMEOUT = (
+    120  # default seconds; a wall-clock limit per command, not per loop
+)
 
 
 # Filled in by build_system_prompt, so the limits the model is told about are the
@@ -47,7 +47,7 @@ How the harness works:
 - A turn is one reply from you and one reply from the harness. Every turn re-sends the whole conversation, so fewer turns and smaller outputs are cheaper.
 - Several <bash> tags in one action run in order, and all results come back together in the next message. Use this for commands that don't depend on each other's output, like reading several files or running the tests and the linter. If a command needs the output of another, put them in separate turns. A failing command does not stop the ones after it.
 - Each command runs in a fresh shell. `cd` and `export` do not carry over to the next command. Use absolute paths, or `cd dir && cmd` within one command.
-- Limits: a command is killed after {command_timeout:g}s, and output is cut after {max_output_chars} characters (a marker tells you when). So use `head`, `grep` and `wc -l` instead of dumping large files, and don't start servers, watchers or interactive programs.
+- Limits: a command is killed after {command_timeout:g}s, and stdout and stderr are each cut after the first {max_output_chars} characters (a marker tells you when). So use `head`, `grep` and `wc -l` instead of dumping large files, and don't start servers, watchers or interactive programs.
 - A reply that is not a valid <action> costs a turn. The harness sends back an error and you retry.
 - <exit> ends your turn and shows your answer to the user, who may reply. If you need clarification, ask it there.
 
@@ -256,9 +256,16 @@ def format_bash_result(result: BashResult) -> str:
         )
     return (
         f"Command `{result.cmd}` finished with exit code {result.returncode}.\n"
-        f'stdout: "{result.stdout}"\n'
-        f'stderr: "{result.stderr}"'
+        f'stdout: "{truncate(result.stdout)}"\n'
+        f'stderr: "{truncate(result.stderr)}"'
     )
+
+
+def truncate(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
+    """Keep the first `limit` characters and say how much was cut."""
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}\n[... truncated: showing {limit} of {len(text)} characters]"
 
 
 class LlmError(Exception):
@@ -269,11 +276,11 @@ class LlmError(Exception):
     """
 
 
-async def llm_call(client: AsyncClient, messages: list[Message]) -> str:
+async def llm_call(client: AsyncClient, model: str, messages: list[Message]) -> str:
     """Ask Ollama for the next reply; every failure is raised as LlmError."""
     try:
         response = await client.post(
-            "/api/chat", json={"model": MODEL, "stream": False, "messages": messages}
+            "/api/chat", json={"model": model, "stream": False, "messages": messages}
         )
     except httpx2.HTTPError as e:
         raise LlmError(f"Could not reach the model: {e}") from e
@@ -468,7 +475,7 @@ def build_system_prompt(
     context: Context | None = None,
     skill_catalog: str = "",
     *,
-    command_timeout: float = COMMAND_TIMEOUT,
+    command_timeout: float = DEFAULT_COMMAND_TIMEOUT,
 ) -> str:
     prompt = SYSTEM_PROMPT_TEMPLATE.format(
         command_timeout=command_timeout, max_output_chars=MAX_OUTPUT_CHARS
@@ -487,7 +494,7 @@ async def run_agent(
     skills: SkillLibrary,
     on_event: OnEvent = _ignore,
     *,
-    command_timeout: float = COMMAND_TIMEOUT,
+    command_timeout: float = DEFAULT_COMMAND_TIMEOUT,
 ) -> tuple[str, list[Message]]:
     for turn in range(max_turns):
         emit(on_event, TurnStart(turn, max_turns))

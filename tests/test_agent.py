@@ -9,7 +9,6 @@ from httpx2 import AsyncClient
 
 from koding_agent.agent import (
     MIXED_ACTIONS_ERROR,
-    MODEL,
     LlmError,
     Message,
     llm_call,
@@ -101,12 +100,12 @@ async def test_llm_call_posts_history_and_returns_reply() -> None:
 
     messages: list[Message] = [{"role": "user", "content": "hello"}]
     async with fake_ollama(handler) as client:
-        reply = await llm_call(client, messages)
+        reply = await llm_call(client, "some-model", messages)
 
     assert reply == "<exit>hi</exit>"
     assert requests[0].url.path == "/api/chat"
     assert json.loads(requests[0].content) == {
-        "model": MODEL,
+        "model": "some-model",  # the model passed in, not a global
         "stream": False,
         "messages": messages,
     }
@@ -147,4 +146,4 @@ async def test_llm_call_turns_failures_into_llm_error(
 
     async with fake_ollama(handler) as client:
         with pytest.raises(LlmError, match=expected):
-            await llm_call(client, [])
+            await llm_call(client, "some-model", [])

@@ -34,7 +34,9 @@ What it does today:
   (`--prompt`, answer printed pipe-clean), and a plain line-based REPL (`--plain`).
   See [Modes](#modes).
 - **Bounded runs** – a turn budget (`--max-turns`), a timeout per command (`--command-timeout`, default 120 s),
-  and truncated tool output (2000 chars) so a runaway turn can't flood the context.
+  and truncated tool output (first 2000 chars of stdout and of stderr) so a runaway
+  turn can't flood the context.
+- **Configurable model** – `--model` picks the Ollama model (default `qwen3.8:27b-mlx`).
 - **Parallel tool calls** – a turn may batch several independent `<bash>` actions;
   mixing `<bash>` and `<exit>` is rejected with an error fed back to the model.
   (Lives on the `multiple_tool_calls` branch; not yet merged into `main`.)
@@ -62,9 +64,11 @@ The [`diary.md`](diary.md) logs pitfalls and design decisions made along the way
 
 ## Develop
 
-Development uses uv with Python 3.14.4; `uv sync` builds the environment. Ollama
-on the host is reachable at `$OLLAMA_HOST` (`http://host.docker.internal:11434`),
-so develop **inside a container** as well.
+Development uses uv with Python 3.14.4; `uv sync` builds the environment. The
+agent reaches Ollama at `http://host.docker.internal:11434`, the host as seen from
+a container, so develop **inside a container** as well. To run it directly on the
+host instead, point it elsewhere with a full URL:
+`export OLLAMA_HOST=http://localhost:11434`.
 
 ```bash
 uv run ruff check .     # lint
