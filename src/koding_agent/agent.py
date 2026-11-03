@@ -126,7 +126,7 @@ class BashResult:
         return cls(cmd, stdout, stderr, returncode=None, timed_out=True)
 
     @property
-    def status(self) -> str:
+    def status(self) -> Literal["ok","failed"]:
         if self.timed_out or self.returncode != 0:
             return "failed"
         return "ok"
@@ -139,7 +139,7 @@ class SkillResult:
     returncode: int | None
 
     @property
-    def status(self) -> str:
+    def status(self) -> Literal["ok","failed"]:
         if self.returncode != 0:
             return "failed"
         return "ok"
