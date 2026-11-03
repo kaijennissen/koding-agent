@@ -37,3 +37,13 @@ def test_color_prompt_wraps_codes_only_for_readline() -> None:
 )
 def test_banner_shows_context(context: str | None, expected: str) -> None:
     assert expected in render_banner("m", color=False, context=context)
+
+
+def test_banner_lists_skills_sorted() -> None:
+    banner = render_banner("m", color=False, skills=["tdd", "polars", "grilling"])
+
+    assert "skills:  grilling, polars, tdd" in banner
+
+
+def test_banner_without_skills_shows_dash() -> None:
+    assert "skills:  -" in render_banner("m", color=False)

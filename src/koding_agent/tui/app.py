@@ -198,6 +198,7 @@ class AgentApp(App[None]):
                             self.model,
                             color=True,
                             context=self.context.path.name if self.context else None,
+                            skills=self.skills.skills,
                         )
                     ),
                     id="banner",

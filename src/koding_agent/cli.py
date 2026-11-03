@@ -167,7 +167,7 @@ async def run_plain(
                 ),
             }
         ]
-        print_banner(model, context.path.name if context else None)
+        print_banner(model, context.path.name if context else None, skills.skills)
         while True:
             prompt = input(prompt_text())
             if prompt == "exit":
