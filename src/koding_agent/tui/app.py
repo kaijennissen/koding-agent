@@ -42,10 +42,6 @@ DEFAULT_MODEL = "unknown-model"
 type Status = Literal["running", "ok", "failed", "cancelled"]
 
 
-def status_for(result: ToolResult) -> Status:
-    """The one place that decides what counts as a failed tool call."""
-    return result.status
-
 class ToolRow(Horizontal):
     """One tool call: a coloured bullet and the command on a single line.
 
@@ -237,7 +233,7 @@ class AgentApp(App[None]):
 
     def on_tool_finished(self, message: ToolFinished) -> None:
         # A missing id means an end without a start: a bug, so let it raise.
-        self.rows[message.tool.id].set_status(status_for(message.result))
+        self.rows[message.tool.id].set_status(message.result.status)
 
     def on_tool_aborted(self, message: ToolAborted) -> None:
         self.rows[message.tool.id].set_status("cancelled")
