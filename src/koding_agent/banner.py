@@ -9,6 +9,7 @@ dropped when stdout is not a terminal or when NO_COLOR is set
 
 import os
 import sys
+from collections.abc import Iterable
 
 from koding_agent import __version__
 
@@ -32,7 +33,12 @@ def use_color() -> bool:
     return sys.stdout.isatty() and "NO_COLOR" not in os.environ
 
 
-def render_banner(model: str, color: bool, context: str | None = None) -> str:
+def render_banner(
+    model: str,
+    color: bool,
+    context: str | None = None,
+    skills: Iterable[str] = (),
+) -> str:
     def paint(text: str, *codes: str) -> str:
         return f"{''.join(codes)}{text}{RESET}" if color else text
 
@@ -41,19 +47,26 @@ def render_banner(model: str, color: bool, context: str | None = None) -> str:
     k_bot, a_bot, i_bot = "█ █", "█▀█", "█"
 
     name = paint("koding agent", BOLD)
-    meta = paint(f"v{__version__} · {model} · type 'exit' to quit", DIM)
+    meta = paint(f"v{__version__} · type 'exit' to quit", DIM)
 
     def logo(k: str, a: str, i: str) -> str:
         return f"{paint(k, MAGENTA)} {paint(a, BLUE)} {paint(i, LIME)}"
 
     line1 = f"{logo(k_top, a_top, i_top)}   {name}"
     line2 = f"{logo(k_bot, a_bot, i_bot)}   {meta}"
-    line3 = f"{' ' * 8}{paint(f'context: {context or "-"}', DIM)}"
-    return f"{line1}\n{line2}\n{line3}\n"
+    details = {
+        "model": model,
+        "context": context or "-",
+        "skills": ", ".join(sorted(skills)) or "-",
+    }
+    rows = [paint(f"{f'{label}:':<9}{value}", DIM) for label, value in details.items()]
+    return "\n".join([line1, line2, *rows]) + "\n"
 
 
-def print_banner(model: str, context: str | None = None) -> None:
-    print(render_banner(model, color=use_color(), context=context))
+def print_banner(
+    model: str, context: str | None = None, skills: Iterable[str] = ()
+) -> None:
+    print(render_banner(model, color=use_color(), context=context, skills=skills))
 
 
 def render_prompt(color: bool, readline_active: bool) -> str:
