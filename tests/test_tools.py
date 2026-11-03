@@ -7,10 +7,12 @@ from pathlib import Path
 import pytest
 
 from koding_agent.agent import (
+    MAX_OUTPUT_CHARS,
     BashCall,
     BashResult,
     format_bash_result,
     run_bash_tool,
+    truncate,
 )
 
 
@@ -89,6 +91,30 @@ def test_format_bash_result(
         assert part in observation
     for part in absent:
         assert part not in observation
+
+
+@pytest.mark.parametrize(
+    "text,limit,expected",
+    [
+        pytest.param("abc", 3, "abc", id="at-limit-unchanged"),
+        pytest.param(
+            "abcdef", 3, "abc\n[... truncated: showing 3 of 6 characters]", id="cut"
+        ),
+    ],
+)
+def test_truncate(text: str, limit: int, expected: str) -> None:
+    assert truncate(text, limit) == expected
+
+
+def test_format_bash_result_truncates_each_stream() -> None:
+    """The model's context is what we pay for, so long output is cut before it."""
+    long = "x" * (MAX_OUTPUT_CHARS + 1)
+    result = BashResult.completed("cat big", stdout=long, stderr=long, returncode=0)
+
+    observation = format_bash_result(result)
+
+    assert long not in observation
+    assert observation.count("[... truncated") == 2
 
 
 @pytest.mark.parametrize(

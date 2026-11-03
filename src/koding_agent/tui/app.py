@@ -16,7 +16,7 @@ from textual.message import Message
 from textual.widgets import Footer, Static, TextArea
 
 from koding_agent.agent import (
-    COMMAND_TIMEOUT,
+    DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
     Context,
     Event,
@@ -36,8 +36,6 @@ from koding_agent.agent import (
     Message as ChatMessage,
 )
 from koding_agent.banner import render_banner
-
-DEFAULT_MODEL = "unknown-model"
 
 type Status = Literal["running", "ok", "failed", "cancelled"]
 
@@ -163,10 +161,10 @@ class AgentApp(App[None]):
     def __init__(
         self,
         call: LlmCall,
+        model: str,  # display only; the model actually called is baked into `call`
         skills: SkillLibrary = SkillLibrary({}),
-        model: str = DEFAULT_MODEL,
         max_turns: int = DEFAULT_MAX_TURNS,
-        command_timeout: float = COMMAND_TIMEOUT,
+        command_timeout: float = DEFAULT_COMMAND_TIMEOUT,
         first_prompt: str | None = None,
         context: Context | None = None,
     ) -> None:

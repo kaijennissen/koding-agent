@@ -3,8 +3,14 @@
 import pytest
 
 from koding_agent import cli
-from koding_agent.agent import COMMAND_TIMEOUT
-from koding_agent.cli import Mode, parse_args, select_mode
+from koding_agent.agent import DEFAULT_COMMAND_TIMEOUT, DEFAULT_MODEL
+from koding_agent.cli import (
+    DEFAULT_OLLAMA_URL,
+    Mode,
+    ollama_url,
+    parse_args,
+    select_mode,
+)
 
 
 @pytest.mark.parametrize(
@@ -44,12 +50,42 @@ def test_conflicting_modes_are_rejected(argv: list[str]) -> None:
 @pytest.mark.parametrize(
     "argv,expected",
     [
-        pytest.param([], COMMAND_TIMEOUT, id="default"),
+        pytest.param([], DEFAULT_COMMAND_TIMEOUT, id="default"),
         pytest.param(["--command-timeout", "7.5"], 7.5, id="--command-timeout"),
     ],
 )
 def test_command_timeout_flag(argv: list[str], expected: float) -> None:
     assert parse_args(argv).command_timeout == expected
+
+
+@pytest.mark.parametrize(
+    "argv,expected",
+    [
+        pytest.param([], DEFAULT_MODEL, id="default"),
+        pytest.param(["--model", "llama3"], "llama3", id="--model"),
+        pytest.param(["-m", "llama3"], "llama3", id="-m"),
+    ],
+)
+def test_model_flag(argv: list[str], expected: str) -> None:
+    assert parse_args(argv).model == expected
+
+
+@pytest.mark.parametrize(
+    "env,expected",
+    [
+        pytest.param(None, DEFAULT_OLLAMA_URL, id="unset"),
+        pytest.param("", DEFAULT_OLLAMA_URL, id="empty"),
+        pytest.param("http://localhost:11434", "http://localhost:11434", id="set"),
+    ],
+)
+def test_ollama_url_reads_ollama_host(
+    monkeypatch: pytest.MonkeyPatch, env: str | None, expected: str
+) -> None:
+    if env is None:
+        monkeypatch.delenv("OLLAMA_HOST", raising=False)
+    else:
+        monkeypatch.setenv("OLLAMA_HOST", env)
+    assert ollama_url() == expected
 
 
 def test_tui_without_a_terminal_exits_with_a_hint(
