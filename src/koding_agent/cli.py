@@ -26,9 +26,11 @@ from koding_agent.agent import (
     Context,
     LlmError,
     Message,
+    SkillLibrary,
     build_system_prompt,
     llm_call,
     load_context,
+    load_skills,
     print_event,
     run_agent,
 )
@@ -76,6 +78,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="do not load AGENTS.md from the current directory",
     )
     parser.add_argument(
+        "--skills-dir",
+        type=Path,
+        metavar="DIR",
+        help="load skills from DIR/*/SKILL.md",
+    )
+    parser.add_argument(
         "-v", "--version", action="version", version=f"%(prog)s {__version__}"
     )
     args = parser.parse_args(argv)
@@ -95,12 +103,15 @@ def select_mode(args: argparse.Namespace) -> Mode:
 async def run_headless(
     prompt: str,
     max_turns: int,
+    skills: SkillLibrary,
     context: Context | None = None,
-    skills_dir: Path | None = None,
 ) -> None:
     async with ollama_client() as client:
         messages: list[Message] = [
-            {"role": "system", "content": build_system_prompt(context)},
+            {
+                "role": "system",
+                "content": build_system_prompt(context, skills.catalog()),
+            },
             {"role": "user", "content": prompt},
         ]
         try:
@@ -108,6 +119,7 @@ async def run_headless(
                 messages,
                 max_turns=max_turns,
                 call=partial(llm_call, client),
+                skills=skills,
                 on_event=print_event,
             )
         except LlmError as e:
@@ -116,12 +128,15 @@ async def run_headless(
 
 
 async def run_plain(
-    max_turns: int, context: Context | None = None, skills_dir: Path | None = None
+    max_turns: int, skills: SkillLibrary, context: Context | None = None
 ) -> None:
     async with ollama_client() as client:
         call = partial(llm_call, client)
         messages: list[Message] = [
-            {"role": "system", "content": build_system_prompt(context)}
+            {
+                "role": "system",
+                "content": build_system_prompt(context, skills.catalog()),
+            }
         ]
         print_banner(MODEL, context.path.name if context else None)
         while True:
@@ -134,7 +149,7 @@ async def run_plain(
                     messages,
                     max_turns=max_turns,
                     call=call,
-                    skills_dir=skills_dir,
+                    skills=skills,
                     on_event=print_event,
                 )
             except LlmError as e:
@@ -147,8 +162,8 @@ async def run_plain(
 async def run_tui(
     max_turns: int,
     first_prompt: str | None,
+    skills: SkillLibrary,
     context: Context | None = None,
-    skills_dir: Path | None = None,
 ) -> None:
     from koding_agent.tui.app import AgentApp  # keeps Textual off the -p path
 
@@ -158,7 +173,7 @@ async def run_tui(
             model=MODEL,
             max_turns=max_turns,
             first_prompt=first_prompt,
-            skills_dir=skills_dir,
+            skills=skills,
             context=context,
         )
         await app.run_async()
@@ -166,23 +181,25 @@ async def run_tui(
 
 def cli(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
-    #tool_fn = partial(run_bash_tool, timeout=args.timeout)
+    # tool_fn = partial(run_bash_tool, timeout=args.timeout)
     context = None if args.no_context else load_context()
+    skills = load_skills(args.skills_dir)
     match select_mode(args):
         case "headless":
             asyncio.run(
                 run_headless(
                     prompt=args.headless_prompt,
                     max_turns=args.max_turns,
-                    skills_dir=args.skills_dir,
+                    skills=skills,
+                    context=context,
                 )
             )
         case "plain":
             asyncio.run(
                 run_plain(
                     max_turns=args.max_turns,
+                    skills=skills,
                     context=context,
-                    skills_dir=args.skills_dir,
                 )
             )
         case "tui":
@@ -195,8 +212,8 @@ def cli(argv: Sequence[str] | None = None) -> None:
                 run_tui(
                     max_turns=args.max_turns,
                     first_prompt=args.prompt,
+                    skills=skills,
                     context=context,
-                    skills_dir=args.skills_dir,
                 )
             )
 

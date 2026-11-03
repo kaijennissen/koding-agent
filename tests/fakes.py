@@ -1,4 +1,4 @@
-"""Test doubles for the core's two seams, LlmCall and RunTool: no network, no subprocess."""
+"""Test doubles: a scripted model for the LlmCall seam, and canned tool results."""
 
 from koding_agent.agent import BashResult, LlmCall, Message
 
@@ -18,8 +18,3 @@ def replies(*script: str | Exception) -> LlmCall:
 
 def ok(cmd: str) -> BashResult:
     return BashResult.completed(cmd, stdout=f"{cmd} output", stderr="", returncode=0)
-
-
-async def ok_tool(cmd: str) -> BashResult:
-    """A fake tool runner: every command succeeds at once."""
-    return ok(cmd)
