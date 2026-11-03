@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
-from typing import Self, TypedDict, assert_never, cast
+from typing import Literal, Self, TypedDict, assert_never, cast
 
 import httpx2
 import yaml
@@ -152,7 +152,8 @@ class BashCall:
 
     @property
     def display(self) -> str:
-        return self.cmd.replace("\n", " ")
+        cmd=self.cmd.replace("\n", " ")
+        return f"Bash: {cmd}"
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -163,7 +164,7 @@ class SkillCall:
 
     @property
     def display(self) -> str:
-        return self.name
+        return f"Skill: {self.name}"
 
     @property
     def skill_path(self) -> Path:
@@ -275,12 +276,9 @@ def parse_action(text: str) -> dict[str, list[str]]:
     exit_bodies = parse_xml("exit", text)
     bash_bodies = parse_xml("bash", text)
     skill_bodies = parse_xml("skill", text)
-    if (
-        (exit_bodies and bash_bodies)
-        or (exit_bodies and skill_bodies)
-        or (exit_bodies and skill_bodies)
-    ):
-        # Mixing the two action types is not allowed. Signal the mistake as
+    num_bodies = len([bodies for bodies in [exit_bodies, bash_bodies, skill_bodies] if bodies])
+    if num_bodies>1:
+        # Mixing the three action types is not allowed. Signal the mistake as
         # an error so the loop can feed it back and the model can retry,
         # rather than silently terminating.
         return {"error": [MIXED_ACTIONS_ERROR]}

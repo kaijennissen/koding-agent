@@ -18,7 +18,6 @@ from textual.widgets import Footer, Static, TextArea
 
 from koding_agent.agent import (
     DEFAULT_MAX_TURNS,
-    ToolResult,
     Context,
     Event,
     LlmCall,
@@ -27,6 +26,7 @@ from koding_agent.agent import (
     ToolCall,
     ToolCancelled,
     ToolEnd,
+    ToolResult,
     ToolStart,
     TurnStart,
     build_system_prompt,
