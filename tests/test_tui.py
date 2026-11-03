@@ -15,7 +15,7 @@ from textual.containers import VerticalScroll
 from textual.pilot import Pilot
 from textual.widgets import Static
 
-from fakes import ok, ok_tool, replies
+from fakes import ok, replies
 from koding_agent.agent import (
     BashCall,
     BashResult,
@@ -23,6 +23,8 @@ from koding_agent.agent import (
     LlmCall,
     LlmError,
     Message,
+    SkillCall,
+    ToolCall,
     ToolCancelled,
     ToolEnd,
     ToolStart,
@@ -33,7 +35,6 @@ from koding_agent.tui.app import (
     PromptArea,
     Status,
     ToolRow,
-    status_for,
 )
 
 MODEL = "some-model"
@@ -59,7 +60,7 @@ def llm(script: list[str | Exception]) -> LlmCall:
 
 @pytest.fixture
 def app(llm: LlmCall) -> AgentApp:
-    return AgentApp(llm, ok_tool, model=MODEL)
+    return AgentApp(llm, model=MODEL)
 
 
 @pytest.fixture
@@ -92,7 +93,7 @@ def prompt_text(app: AgentApp) -> str:
 
 
 def row_for(app: AgentApp, id: str) -> ToolRow:
-    (row,) = [r for r in app.query(ToolRow) if r.call.id == id]
+    (row,) = [r for r in app.query(ToolRow) if r.tool.id == id]
     return row
 
 
@@ -155,18 +156,6 @@ class TestPrompt:
 # --- tool rows -----------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "result,status",
-    [
-        pytest.param(ok("true"), "ok", id="exit-0"),
-        pytest.param(FAILED, "failed", id="exit-1"),
-        pytest.param(BashResult.timeout("sleep 9"), "failed", id="timeout"),
-    ],
-)
-def test_status_for(result: BashResult, status: Status) -> None:
-    assert status_for(result) == status
-
-
 class RowApp(App[None]):
     """Hosts a single ToolRow, to test the widget on its own."""
 
@@ -184,8 +173,12 @@ class TestToolRow:
         return "ls"
 
     @pytest.fixture
-    async def row(self, cmd: str) -> AsyncIterator[ToolRow]:
-        app = RowApp(ToolRow(BashCall(id="t1", cmd=cmd)))
+    def tool(self, cmd: str) -> ToolCall:
+        return BashCall(id="t1", cmd=cmd)
+
+    @pytest.fixture
+    async def row(self, tool: ToolCall) -> AsyncIterator[ToolRow]:
+        app = RowApp(ToolRow(tool))
         async with app.run_test():
             yield app.row
 
@@ -225,6 +218,26 @@ class TestToolRow:
     async def test_shows_the_command(self, row: ToolRow, shown: str) -> None:
         assert str(row.query_one(".cmd", Static).render()) == shown
 
+    @pytest.mark.parametrize(
+        "tool,kind,subject",
+        [
+            pytest.param(BashCall(id="t1", cmd="ls"), "Bash", "ls", id="bash"),
+            pytest.param(SkillCall(id="t1", name="pdf"), "Skill", "pdf", id="skill"),
+        ],
+    )
+    async def test_shows_kind_and_subject(
+        self, row: ToolRow, kind: str, subject: str
+    ) -> None:
+        assert str(row.query_one(".kind", Static).render()) == kind
+        assert str(row.query_one(".cmd", Static).render()) == subject
+
+    async def test_kind_is_muted(self, row: ToolRow) -> None:
+        """The kind is secondary information: dimmer and italic, not bold."""
+        kind, cmd = row.query_one(".kind"), row.query_one(".cmd")
+        assert kind.styles.color != cmd.styles.color
+        assert kind.styles.text_style.italic
+        assert not kind.styles.text_style.bold
+
 
 class TestCoreEvents:
     """forward_event turns core events into rows and status text."""
@@ -236,7 +249,7 @@ class TestCoreEvents:
         await pilot.pause()
         (row,) = app.query_one("#tools").query(ToolRow)
         assert row.status == "running"
-        assert row.call == LS
+        assert row.tool == LS
 
     @pytest.mark.parametrize(
         "end,status",
@@ -330,7 +343,7 @@ class TestTurn:
         assert [m["content"] for m in app.messages[1:]] == ["a", EXIT_HI, "b", EXIT_HI]
 
     async def test_first_prompt_is_submitted_on_start(self) -> None:
-        app = AgentApp(replies(EXIT_HI), ok_tool, first_prompt="hello")
+        app = AgentApp(replies(EXIT_HI), first_prompt="hello")
         async with app.run_test() as pilot:
             await settle(app, pilot)
             assert texts(app, ".message.user") == ["> hello"]

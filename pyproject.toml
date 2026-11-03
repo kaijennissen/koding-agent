@@ -14,6 +14,7 @@ dependencies = [
     "structlog",
     "httpx2",
     "textual>=8.2.8",
+    "pyyaml>=6.0.3",
 ]
 
 [project.scripts]
@@ -27,6 +28,7 @@ dev = [
     "ruff",
     "pyright",
     "pytest-asyncio>=1.4.1",
+    "types-pyyaml>=6.0.12.20261103",
 ]
 
 

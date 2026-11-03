@@ -6,7 +6,6 @@ worker on Textual's event loop. The core reports progress through `on_event`;
 update the widgets.
 """
 
-from pathlib import Path
 from typing import Literal, assert_never
 
 from rich.text import Text
@@ -17,16 +16,17 @@ from textual.message import Message
 from textual.widgets import Footer, Static, TextArea
 
 from koding_agent.agent import (
+    COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
-    BashResult,
     Context,
     Event,
     LlmCall,
     LlmError,
-    RunTool,
+    SkillLibrary,
     ToolCall,
     ToolCancelled,
     ToolEnd,
+    ToolResult,
     ToolStart,
     TurnStart,
     build_system_prompt,
@@ -42,13 +42,6 @@ DEFAULT_MODEL = "unknown-model"
 type Status = Literal["running", "ok", "failed", "cancelled"]
 
 
-def status_for(result: BashResult) -> Status:
-    """The one place that decides what counts as a failed tool call."""
-    if result.timed_out or result.returncode != 0:
-        return "failed"
-    return "ok"
-
-
 class ToolRow(Horizontal):
     """One tool call: a coloured bullet and the command on a single line.
 
@@ -59,6 +52,7 @@ class ToolRow(Horizontal):
     DEFAULT_CSS = """
     ToolRow { height: 1; }
     ToolRow .bullet { width: 2; }
+    ToolRow .kind { width: auto; margin-right: 1; color: $text-muted; text-style: italic; }
     ToolRow .cmd { width: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
     ToolRow.running .bullet { color: yellow; }
     ToolRow.ok .bullet { color: $success; }
@@ -73,7 +67,8 @@ class ToolRow(Horizontal):
 
     def compose(self) -> ComposeResult:
         yield Static("●", classes="bullet")
-        yield Static(self.tool.display, classes="cmd", markup=False)
+        yield Static(self.tool.kind, classes="kind", markup=False)
+        yield Static(self.tool.subject, classes="cmd", markup=False)
 
     def set_status(self, status: Status) -> None:
         self.remove_class(self.status)
@@ -119,7 +114,7 @@ class ToolStarted(Message):
 
 
 class ToolFinished(Message):
-    def __init__(self, tool: ToolCall, result: BashResult) -> None:
+    def __init__(self, tool: ToolCall, result: ToolResult) -> None:
         super().__init__()
         self.tool = tool
         self.result = result
@@ -145,7 +140,7 @@ class TurnFinished(Message):
 class AgentApp(App[None]):
     """One conversation with the agent; at most one turn runs at a time.
 
-    The model call and the tool runner are passed in, so tests can use fakes.
+    The model call and the skill library are passed in, so tests can use fakes.
     """
 
     CSS = """
@@ -168,10 +163,10 @@ class AgentApp(App[None]):
     def __init__(
         self,
         call: LlmCall,
-        tool_fn: RunTool,
-        skills_dir: Path,
+        skills: SkillLibrary = SkillLibrary({}),
         model: str = DEFAULT_MODEL,
         max_turns: int = DEFAULT_MAX_TURNS,
+        command_timeout: float = COMMAND_TIMEOUT,
         first_prompt: str | None = None,
         context: Context | None = None,
     ) -> None:
@@ -179,12 +174,17 @@ class AgentApp(App[None]):
         self.context = context
         self.first_prompt = first_prompt
         self.call = call
-        self.tool_fn = tool_fn
         self.model = model
         self.max_turns = max_turns
-        self.skills_dir = skills_dir
+        self.command_timeout = command_timeout
+        self.skills = skills
         self.messages: list[ChatMessage] = [
-            {"role": "system", "content": build_system_prompt(context)}
+            {
+                "role": "system",
+                "content": build_system_prompt(
+                    context, skills.catalog(), command_timeout=command_timeout
+                ),
+            }
         ]
         self.busy = False
         self.rows: dict[str, ToolRow] = {}  # tool.id -> row
@@ -240,7 +240,7 @@ class AgentApp(App[None]):
 
     def on_tool_finished(self, message: ToolFinished) -> None:
         # A missing id means an end without a start: a bug, so let it raise.
-        self.rows[message.tool.id].set_status(status_for(message.result))
+        self.rows[message.tool.id].set_status(message.result.status)
 
     def on_tool_aborted(self, message: ToolAborted) -> None:
         self.rows[message.tool.id].set_status("cancelled")
@@ -281,8 +281,9 @@ class AgentApp(App[None]):
                 messages=self.messages,
                 max_turns=self.max_turns,
                 call=self.call,
-                skills_dir=self.skills_dir,
+                skills=self.skills,
                 on_event=self.forward_event,
+                command_timeout=self.command_timeout,
             )
             await self.add_message(answer, "assistant")
         except LlmError as e:

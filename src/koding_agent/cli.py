@@ -19,6 +19,7 @@ import httpx2
 
 from koding_agent import __version__
 from koding_agent.agent import (
+    COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
     MODEL,
     RED,
@@ -26,9 +27,11 @@ from koding_agent.agent import (
     Context,
     LlmError,
     Message,
+    SkillLibrary,
     build_system_prompt,
     llm_call,
     load_context,
+    load_skills,
     print_event,
     run_agent,
 )
@@ -64,8 +67,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "-t", "--max-turns", default=DEFAULT_MAX_TURNS, type=int, help="max turns"
     )
     parser.add_argument(
-        "--timeout",
-        default=60,
+        "--command-timeout",
+        default=COMMAND_TIMEOUT,
         type=float,
         help="seconds a bash command may run before it is killed (default: %(default)s)",
     )
@@ -74,6 +77,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--no-context",
         action="store_true",
         help="do not load AGENTS.md from the current directory",
+    )
+    parser.add_argument(
+        "--skills-dir",
+        type=Path,
+        metavar="DIR",
+        help="load skills from DIR/*/SKILL.md",
     )
     parser.add_argument(
         "-v", "--version", action="version", version=f"%(prog)s {__version__}"
@@ -95,12 +104,18 @@ def select_mode(args: argparse.Namespace) -> Mode:
 async def run_headless(
     prompt: str,
     max_turns: int,
+    command_timeout: float,
+    skills: SkillLibrary,
     context: Context | None = None,
-    skills_dir: Path | None = None,
 ) -> None:
     async with ollama_client() as client:
         messages: list[Message] = [
-            {"role": "system", "content": build_system_prompt(context)},
+            {
+                "role": "system",
+                "content": build_system_prompt(
+                    context, skills.catalog(), command_timeout=command_timeout
+                ),
+            },
             {"role": "user", "content": prompt},
         ]
         try:
@@ -108,7 +123,9 @@ async def run_headless(
                 messages,
                 max_turns=max_turns,
                 call=partial(llm_call, client),
+                skills=skills,
                 on_event=print_event,
+                command_timeout=command_timeout,
             )
         except LlmError as e:
             sys.exit(f"{RED}{e}{RESET}")  # one-shot: report and fail
@@ -116,12 +133,20 @@ async def run_headless(
 
 
 async def run_plain(
-    max_turns: int, context: Context | None = None, skills_dir: Path | None = None
+    max_turns: int,
+    command_timeout: float,
+    skills: SkillLibrary,
+    context: Context | None = None,
 ) -> None:
     async with ollama_client() as client:
         call = partial(llm_call, client)
         messages: list[Message] = [
-            {"role": "system", "content": build_system_prompt(context)}
+            {
+                "role": "system",
+                "content": build_system_prompt(
+                    context, skills.catalog(), command_timeout=command_timeout
+                ),
+            }
         ]
         print_banner(MODEL, context.path.name if context else None)
         while True:
@@ -134,8 +159,9 @@ async def run_plain(
                     messages,
                     max_turns=max_turns,
                     call=call,
-                    skills_dir=skills_dir,
+                    skills=skills,
                     on_event=print_event,
+                    command_timeout=command_timeout,
                 )
             except LlmError as e:
                 # Keep the session: history is still valid, so the user can retry.
@@ -147,8 +173,9 @@ async def run_plain(
 async def run_tui(
     max_turns: int,
     first_prompt: str | None,
+    command_timeout: float,
+    skills: SkillLibrary,
     context: Context | None = None,
-    skills_dir: Path | None = None,
 ) -> None:
     from koding_agent.tui.app import AgentApp  # keeps Textual off the -p path
 
@@ -158,7 +185,8 @@ async def run_tui(
             model=MODEL,
             max_turns=max_turns,
             first_prompt=first_prompt,
-            skills_dir=skills_dir,
+            command_timeout=command_timeout,
+            skills=skills,
             context=context,
         )
         await app.run_async()
@@ -166,23 +194,26 @@ async def run_tui(
 
 def cli(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
-    #tool_fn = partial(run_bash_tool, timeout=args.timeout)
     context = None if args.no_context else load_context()
+    skills = load_skills(args.skills_dir)
     match select_mode(args):
         case "headless":
             asyncio.run(
                 run_headless(
                     prompt=args.headless_prompt,
                     max_turns=args.max_turns,
-                    skills_dir=args.skills_dir,
+                    command_timeout=args.command_timeout,
+                    skills=skills,
+                    context=context,
                 )
             )
         case "plain":
             asyncio.run(
                 run_plain(
                     max_turns=args.max_turns,
+                    command_timeout=args.command_timeout,
+                    skills=skills,
                     context=context,
-                    skills_dir=args.skills_dir,
                 )
             )
         case "tui":
@@ -195,8 +226,9 @@ def cli(argv: Sequence[str] | None = None) -> None:
                 run_tui(
                     max_turns=args.max_turns,
                     first_prompt=args.prompt,
+                    command_timeout=args.command_timeout,
+                    skills=skills,
                     context=context,
-                    skills_dir=args.skills_dir,
                 )
             )
 
