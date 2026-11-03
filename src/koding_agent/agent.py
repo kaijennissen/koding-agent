@@ -1,9 +1,9 @@
 """A minimal coding agent: an act -> observe -> decide loop over an LLM.
 
-Each turn: ask the model for one or more actions, execute them (sequentially),
-feed the results back. A turn is either one <exit> or one-or-more <bash>
-actions; mixing the two is not allowed. The loop ends when the model
-emits <exit> or the turn budget runs out.
+Each turn: ask the model for one or more actions, execute them (concurrently),
+feed the results back. A turn is either one <exit>, one-or-more <bash>, or
+one-or-more <skill> actions; mixing types is not allowed. The loop ends when
+the model emits <exit> or the turn budget runs out.
 """
 
 import asyncio
@@ -14,10 +14,12 @@ import signal
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
-from typing import Self, TypedDict, assert_never, cast
+from typing import Any, ClassVar, Literal, Self, TypedDict, assert_never, cast
 
 import httpx2
+import yaml
 from httpx2 import AsyncClient
 
 from koding_agent.banner import GREY, RESET, rgb
@@ -33,25 +35,27 @@ MODEL = "qwen3.8:27b-mlx"
 
 DEFAULT_MAX_TURNS = 25  # safety net; the agent is meant to stop itself with <exit>
 MAX_OUTPUT_CHARS = 2000  # tool output is context we pay for on every later turn
-COMMAND_TIMEOUT = 120  # seconds; a wall-clock limit per command, not per loop
+COMMAND_TIMEOUT = 120  # default seconds; a wall-clock limit per command, not per loop
 
 
-SYSTEM_PROMPT = f"""You are an autonomous coding agent. You solve the user's task in turns: you act, observe the results, then decide what to do next.
+# Filled in by build_system_prompt, so the limits the model is told about are the
+# ones the harness enforces.
+SYSTEM_PROMPT_TEMPLATE = """You are an autonomous coding agent. You solve the user's task in turns: you act, observe the results, then decide what to do next.
 Always explore your environment first. You're running on a computer and have access to a file-system as well as a bash-shell.
 
 How the harness works:
 - A turn is one reply from you and one reply from the harness. Every turn re-sends the whole conversation, so fewer turns and smaller outputs are cheaper.
 - Several <bash> tags in one action run in order, and all results come back together in the next message. Use this for commands that don't depend on each other's output, like reading several files or running the tests and the linter. If a command needs the output of another, put them in separate turns. A failing command does not stop the ones after it.
 - Each command runs in a fresh shell. `cd` and `export` do not carry over to the next command. Use absolute paths, or `cd dir && cmd` within one command.
-- Limits: a command is killed after {COMMAND_TIMEOUT}s, and output is cut after {MAX_OUTPUT_CHARS} characters (a marker tells you when). So use `head`, `grep` and `wc -l` instead of dumping large files, and don't start servers, watchers or interactive programs.
+- Limits: a command is killed after {command_timeout:g}s, and output is cut after {max_output_chars} characters (a marker tells you when). So use `head`, `grep` and `wc -l` instead of dumping large files, and don't start servers, watchers or interactive programs.
 - A reply that is not a valid <action> costs a turn. The harness sends back an error and you retry.
 - <exit> ends your turn and shows your answer to the user, who may reply. If you need clarification, ask it there.
 
-Every reply you send is a single <action> element. It contains either exactly one <exit> tag, or one or more <bash> tags. Do not mix <exit> with <bash> in the same action. Output only the <action> element, with nothing before or after it.
+Every reply you send is a single <action> element. An action uses exactly one type of tag: either exactly one <exit> tag, or one or more tags of a single other type. Never mix tag types in the same action. Output only the <action> element, with nothing before or after it.
 
-The two actions:
+The actions:
 - <bash>: run a shell command. Put the command inside the tag. You may issue several <bash> tags in one action; each is executed in turn and every result is sent back to you as the next message, then you continue.
-- <exit>: the task is done. This ends the loop. Put your final answer to the user inside the tag. An <exit> action contains no <bash> tags.
+- <exit>: the task is done. This ends the loop. Put your final answer to the user inside the tag. An <exit> action contains no other tags.
 
 Examples:
 
@@ -94,10 +98,25 @@ Examples:
 
 
 MIXED_ACTIONS_ERROR = (
-    "Invalid action: a turn may contain either a single <exit> tag "
-    "or one or more <bash> tags, but not both. Re-issue the action "
-    "with a single action type."
+    "Invalid action: a turn may contain a single <exit> tag, one or more "
+    "<bash> tags, or one or more <skill> tags, but not a mix of them. "
+    "Re-issue the action with a single action type."
 )
+
+
+SKILLS_PROMPT = """# Skills
+
+Skills are instructions for specific kinds of tasks. When a task matches a
+skill's description, load it before acting:
+
+<action>
+<skill>skill-name</skill>
+</action>
+
+The skill's instructions come back as the next message. A <skill> action
+contains no <bash> or <exit> tags.
+
+Available skills:"""
 
 
 class Message(TypedDict):
@@ -123,37 +142,93 @@ class BashResult:
     def timeout(cls, cmd: str, stdout: str = "", stderr: str = "") -> Self:
         return cls(cmd, stdout, stderr, returncode=None, timed_out=True)
 
+    @property
+    def status(self) -> Literal["ok", "failed"]:
+        if self.timed_out or self.returncode != 0:
+            return "failed"
+        return "ok"
+
+
+@dataclass(frozen=True)
+class Skill:
+    name: str
+    description: str
+    body: str  # frontmatter stripped
+    dir: Path  # absolute; the skill's relative paths resolve against it
+
+
+@dataclass(frozen=True)
+class SkillLibrary:
+    skills: dict[str, Skill]
+
+    def catalog(self) -> str:
+        """One line per skill: name and description. Empty string when there are no skills."""
+        return "\n".join(f"- {s.name}: {s.description}" for s in self.skills.values())
+
+    def resolve(self, name: str) -> Skill | None:
+        return self.skills.get(name)
+
+
+@dataclass(frozen=True)
+class SkillResult:
+    name: str  # what the model asked for
+    skill: Skill | None  # None = unknown name
+    available: tuple[str, ...]  # for the error message
+
+    @property
+    def status(self) -> Literal["ok", "failed"]:
+        return "ok" if self.skill is not None else "failed"
+
 
 @dataclass(frozen=True, kw_only=True)
 class BashCall:
+    kind: ClassVar[str] = "Bash"
     id: str
     cmd: str
+
+    @property
+    def subject(self) -> str:
+        return self.cmd.replace("\n", " ")
+
+    @property
+    def display(self) -> str:
+        return f"{self.kind}: {self.subject}"
 
 
 @dataclass(frozen=True, kw_only=True)
 class SkillCall:
+    kind: ClassVar[str] = "Skill"
     id: str
     name: str
 
+    @property
+    def subject(self) -> str:
+        return self.name
 
-type ToolCall = BashCall
-type RunTool = Callable[[str], Awaitable[BashResult]]  # cmd -> result
+    @property
+    def display(self) -> str:
+        return f"{self.kind}: {self.subject}"
+
+
+type ToolCall = BashCall | SkillCall
+type ToolResult = BashResult | SkillResult
+type RunTool[C: ToolCall, R: ToolResult] = Callable[[C], Awaitable[R]]  # call -> result
 
 
 @dataclass(frozen=True)
 class ToolStart:
-    call: ToolCall
+    tool: ToolCall
 
 
 @dataclass(frozen=True)
 class ToolEnd:
-    call: ToolCall
-    result: BashResult
+    tool: ToolCall
+    result: ToolResult
 
 
 @dataclass(frozen=True)
 class ToolCancelled:
-    call: ToolCall
+    tool: ToolCall
 
 
 type Event = ToolStart | ToolEnd | ToolCancelled | TurnStart
@@ -171,7 +246,7 @@ def create_uuid():
     return str(uuid.uuid4()).split("-")[0]
 
 
-def format_observation(result: BashResult) -> str:
+def format_bash_result(result: BashResult) -> str:
     """Turn a BashResult into the text the model reads."""
     if result.timed_out:
         return (
@@ -232,8 +307,12 @@ def parse_action(text: str) -> dict[str, list[str]]:
     """
     exit_bodies = parse_xml("exit", text)
     bash_bodies = parse_xml("bash", text)
-    if exit_bodies and bash_bodies:
-        # Mixing the two action types is not allowed. Signal the mistake as
+    skill_bodies = parse_xml("skill", text)
+    num_bodies = len(
+        [bodies for bodies in [exit_bodies, bash_bodies, skill_bodies] if bodies]
+    )
+    if num_bodies > 1:
+        # Mixing the three action types is not allowed. Signal the mistake as
         # an error so the loop can feed it back and the model can retry,
         # rather than silently terminating.
         return {"error": [MIXED_ACTIONS_ERROR]}
@@ -241,6 +320,8 @@ def parse_action(text: str) -> dict[str, list[str]]:
         return {"exit": exit_bodies}
     if bash_bodies:
         return {"bash": bash_bodies}
+    if skill_bodies:
+        return {"skill": skill_bodies}
     return {"error": ["Couldn't parse any action. Please retry!"]}
 
 
@@ -248,24 +329,70 @@ def print_event(event: Event) -> None:
     match event:
         case TurnStart(turn=turn, max_turns=max_turns):
             print(f"{GREY}Turn: {turn}/{max_turns}{RESET}")
-        case ToolStart(call=BashCall(cmd=cmd)):
-            print(f"{YELLOW}running: {cmd}{RESET}")
-
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(returncode=0)):
-            print(f"{GREEN}success: {cmd}{RESET}")
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(timed_out=True)):
-            print(f"{RED}timeout: {cmd}{RESET}")
-        case ToolEnd(call=BashCall(cmd=cmd), result=BashResult(returncode=code)):
-            print(f"{RED}failure (exit {code}): {cmd}{RESET}")
-        case ToolCancelled(call=BashCall(cmd=cmd)):
-            print(f"{RED}cancelled: {cmd}{RESET}")
+        case ToolStart(tool=tool):
+            print(f"{YELLOW}running: {tool.display}{RESET}")
+        case ToolEnd(tool=tool, result=result) if result.status == "ok":
+            print(f"{GREEN}success: {tool.display}{RESET}")
+        case ToolEnd(tool=tool):
+            print(f"{RED}failure: {tool.display}{RESET}")
+        case ToolCancelled(tool=tool):
+            print(f"{RED}cancelled: {tool.display}{RESET}")
         case _:
             assert_never(event)
 
 
-async def run_bash_tool(cmd: str, *, timeout: float) -> BashResult:
+def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Return (metadata dict, body string) for a ----delimited frontmatter file."""
+    if not text.startswith("---\n"):
+        return {}, text
+    front, _, body = text.partition("\n---")  # first --- closes the header
+    return yaml.safe_load(front) or {}, body.lstrip("\n")
+
+
+def parse_skill(text: str, source: Path) -> Skill:
+    """Turn SKILL.md text into a Skill. Raises ValueError if frontmatter is missing."""
+    meta, body = split_frontmatter(text)
+    missing = {"name", "description"} - set(meta)
+    if missing:
+        raise ValueError(f"{source} missing required frontmatter: {missing}")
+    return Skill(meta["name"], meta["description"], body, dir=source.parent.resolve())
+
+
+def load_skills(skills_dir: Path | None) -> SkillLibrary:
+    """Read and parse every <skills_dir>/*/SKILL.md. Empty library if no dir is given."""
+    if skills_dir is None:
+        return SkillLibrary({})
+    skills: dict[str, Skill] = {}
+    for path in sorted(skills_dir.glob("*/SKILL.md")):
+        skill = parse_skill(path.read_text(encoding="utf-8"), path)
+        if skill.name in skills:
+            raise ValueError(
+                f"Duplicate skill name `{skill.name}`: {skills[skill.name].dir} and {skill.dir}"
+            )
+        skills[skill.name] = skill
+    return SkillLibrary(skills)
+
+
+def format_skill_result(result: SkillResult) -> str:
+    """Turn a SkillResult into the text the model reads."""
+    if result.skill is None:
+        available = ", ".join(result.available) or "none"
+        return f"Unknown skill `{result.name}`. Available: {available}"
+    skill = result.skill
+    return (
+        f"Skill `{skill.name}` loaded. Its directory is {skill.dir}; relative paths "
+        f"in this skill are relative to it. Read or run those files with <bash>, "
+        f"using absolute paths.\n\n{skill.body}"
+    )
+
+
+async def run_skill_tool(call: SkillCall, *, library: SkillLibrary) -> SkillResult:
+    return SkillResult(call.name, library.resolve(call.name), tuple(library.skills))
+
+
+async def run_bash_tool(tool: BashCall, *, timeout: float) -> BashResult:
     proc = await asyncio.create_subprocess_shell(
-        cmd,
+        tool.cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,
@@ -275,14 +402,14 @@ async def run_bash_tool(cmd: str, *, timeout: float) -> BashResult:
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return BashResult.completed(
-            cmd=cmd,
+            cmd=tool.cmd,
             stdout=stdout.decode(errors="replace"),
             stderr=stderr.decode(errors="replace"),
             returncode=proc.returncode,
         )
 
     except TimeoutError:
-        return BashResult.timeout(cmd)
+        return BashResult.timeout(tool.cmd)
 
     finally:
         try:
@@ -306,18 +433,18 @@ def emit(on_event: OnEvent, event: Event) -> None:
         logging.exception("on_event failed")
 
 
-async def run_tool(
-    tool_call: ToolCall,
-    tool_fn: RunTool,
+async def run_tool[C: ToolCall, R: ToolResult](
+    tool_call: C,  # could be BashCall or SkillCall; function shouldn't know anything about the Call-attributes
+    tool_fn: RunTool[C, R],
     on_event: OnEvent = _ignore,
-) -> BashResult:
-    emit(on_event, ToolStart(call=tool_call))
+) -> R:
+    emit(on_event, ToolStart(tool=tool_call))
     try:
-        result = await tool_fn(tool_call.cmd)
+        result = await tool_fn(tool_call)
     except asyncio.CancelledError:
-        emit(on_event, ToolCancelled(call=tool_call))
+        emit(on_event, ToolCancelled(tool=tool_call))
         raise
-    emit(on_event, ToolEnd(call=tool_call, result=result))
+    emit(on_event, ToolEnd(tool=tool_call, result=result))
     return result
 
 
@@ -337,20 +464,30 @@ def load_context(root: Path | None = None) -> Context | None:
     return None
 
 
-def build_system_prompt(context: Context | None = None) -> str:
-    if context is None:
-        return SYSTEM_PROMPT
-    return (
-        f"{SYSTEM_PROMPT}\n\n# Project Context\n\n## {context.path}\n\n{context.text}\n"
+def build_system_prompt(
+    context: Context | None = None,
+    skill_catalog: str = "",
+    *,
+    command_timeout: float = COMMAND_TIMEOUT,
+) -> str:
+    prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        command_timeout=command_timeout, max_output_chars=MAX_OUTPUT_CHARS
     )
+    if skill_catalog:
+        prompt += f"\n\n{SKILLS_PROMPT}\n{skill_catalog}\n"
+    if context is not None:
+        prompt += f"\n\n# Project Context\n\n## {context.path}\n\n{context.text}\n"
+    return prompt
 
 
 async def run_agent(
     messages: list[Message],
     max_turns: int,
     call: LlmCall,
-    tool_fn: RunTool,
+    skills: SkillLibrary,
     on_event: OnEvent = _ignore,
+    *,
+    command_timeout: float = COMMAND_TIMEOUT,
 ) -> tuple[str, list[Message]]:
     for turn in range(max_turns):
         emit(on_event, TurnStart(turn, max_turns))
@@ -370,19 +507,36 @@ async def run_agent(
                 [assistant_msg, {"role": "user", "content": action["error"][0]}]
             )
             continue
-
+        if "skill" in action:
+            skill_calls = [
+                SkillCall(id=create_uuid(), name=name) for name in action["skill"]
+            ]
+            skill_fn = partial(run_skill_tool, library=skills)
+            skill_results = await asyncio.gather(
+                *(
+                    run_tool(skill_call, tool_fn=skill_fn, on_event=on_event)
+                    for skill_call in skill_calls
+                )
+            )
+            observations = [format_skill_result(result) for result in skill_results]
+            messages.extend(
+                [
+                    assistant_msg,
+                    {"role": "user", "content": "\n\n".join(observations)},
+                ]
+            )
         if "bash" in action:
             # One or more commands, executed in turn; every result is fed
             # back together in a single observation message.
-            tool_calls = [BashCall(id=create_uuid(), cmd=cmd) for cmd in action["bash"]]
-            results = await asyncio.gather(
+            bash_calls = [BashCall(id=create_uuid(), cmd=cmd) for cmd in action["bash"]]
+            bash_fn = partial(run_bash_tool, timeout=command_timeout)
+            bash_results = await asyncio.gather(
                 *(
-                    run_tool(tool_call, tool_fn=tool_fn, on_event=on_event)
-                    for tool_call in tool_calls
+                    run_tool(bash_call, tool_fn=bash_fn, on_event=on_event)
+                    for bash_call in bash_calls
                 )
             )
-
-            observations = [format_observation(result) for result in results]
+            observations = [format_bash_result(result) for result in bash_results]
             messages.extend(
                 [
                     assistant_msg,

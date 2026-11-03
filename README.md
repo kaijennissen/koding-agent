@@ -33,7 +33,7 @@ What it does today:
 - **Three ways to run it** – a terminal UI (the default), a headless one-shot
   (`--prompt`, answer printed pipe-clean), and a plain line-based REPL (`--plain`).
   See [Modes](#modes).
-- **Bounded runs** – a turn budget (`--max-turns`), a 120 s timeout per command,
+- **Bounded runs** – a turn budget (`--max-turns`), a timeout per command (`--command-timeout`, default 120 s),
   and truncated tool output (2000 chars) so a runaway turn can't flood the context.
 - **Parallel tool calls** – a turn may batch several independent `<bash>` actions;
   mixing `<bash>` and `<exit>` is rejected with an error fed back to the model.

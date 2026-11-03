@@ -7,10 +7,15 @@ from pathlib import Path
 import pytest
 
 from koding_agent.agent import (
+    BashCall,
     BashResult,
-    format_observation,
+    format_bash_result,
     run_bash_tool,
 )
+
+
+def bash(cmd: str) -> BashCall:
+    return BashCall(id="1", cmd=cmd)
 
 
 @pytest.mark.parametrize(
@@ -25,7 +30,7 @@ from koding_agent.agent import (
 async def test_run_bash_tool_keeps_streams_apart(
     cmd: str, stdout: str, stderr: str, returncode: int
 ) -> None:
-    result = await run_bash_tool(cmd, timeout=5)
+    result = await run_bash_tool(bash(cmd), timeout=5)
 
     assert result == BashResult.completed(cmd, stdout, stderr, returncode)
 
@@ -33,7 +38,7 @@ async def test_run_bash_tool_keeps_streams_apart(
 async def test_run_bash_tool_times_out() -> None:
     start = time.monotonic()
 
-    result = await run_bash_tool("sleep 5", timeout=0.1)
+    result = await run_bash_tool(bash("sleep 5"), timeout=0.1)
 
     assert result == BashResult.timeout("sleep 5")
     assert time.monotonic() - start < 1
@@ -43,7 +48,7 @@ async def test_run_bash_tool_timeout_kills_child_processes(tmp_path: Path) -> No
     """Killing only the shell would leave its children running unseen."""
     marker = tmp_path / "marker"
 
-    await run_bash_tool(f"(sleep 0.3; touch {marker}) & wait", timeout=0.1)
+    await run_bash_tool(bash(f"(sleep 0.3; touch {marker}) & wait"), timeout=0.1)
     await asyncio.sleep(0.5)
 
     assert not marker.exists()
@@ -74,13 +79,25 @@ async def test_run_bash_tool_timeout_kills_child_processes(tmp_path: Path) -> No
         ),
     ],
 )
-def test_format_observation(
+def test_format_bash_result(
     result: BashResult, present: list[str], absent: list[str]
 ) -> None:
     """Both streams are always labelled; a timeout discards output and exit code."""
-    observation = format_observation(result)
+    observation = format_bash_result(result)
 
     for part in present:
         assert part in observation
     for part in absent:
         assert part not in observation
+
+
+@pytest.mark.parametrize(
+    "result,status",
+    [
+        pytest.param(BashResult.completed("true", "", "", 0), "ok", id="exit-0"),
+        pytest.param(BashResult.completed("false", "", "", 1), "failed", id="exit-1"),
+        pytest.param(BashResult.timeout("sleep 9"), "failed", id="timeout"),
+    ],
+)
+def test_bash_result_status(result: BashResult, status: str) -> None:
+    assert result.status == status

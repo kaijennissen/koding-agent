@@ -17,6 +17,8 @@ from koding_agent.agent import (
     BashCall,
     BashResult,
     Event,
+    SkillCall,
+    SkillResult,
     ToolCancelled,
     ToolEnd,
     ToolStart,
@@ -27,6 +29,7 @@ from koding_agent.agent import (
 )
 
 LS = BashCall(id="1", cmd="ls")
+PDF = SkillCall(id="2", name="pdf")
 
 
 @pytest.mark.parametrize(
@@ -68,8 +71,8 @@ class TestRunTool:
     async def test_reports_start_and_end_with_the_result(
         self, call: BashCall, events: list[Event]
     ) -> None:
-        async def tool(cmd: str) -> BashResult:
-            return ok(cmd)
+        async def tool(call: BashCall) -> BashResult:
+            return ok(call.cmd)
 
         result = await run_tool(call, tool, events.append)
 
@@ -82,7 +85,7 @@ class TestRunTool:
         """A cancelled command still ends its row, so no bullet stays 'running'."""
         started = asyncio.Event()
 
-        async def hang(_: str) -> BashResult:
+        async def hang(_: BashCall) -> BashResult:
             started.set()
             await asyncio.Event().wait()  # never set
             raise AssertionError("unreachable")
@@ -100,18 +103,26 @@ class TestRunTool:
     "event,line",
     [
         pytest.param(TurnStart(0, 5), f"{GREY}Turn: 0/5", id="turn"),
-        pytest.param(ToolStart(LS), f"{YELLOW}running: ls", id="start"),
-        pytest.param(ToolEnd(LS, ok("ls")), f"{GREEN}success: ls", id="exit-0"),
+        pytest.param(ToolStart(LS), f"{YELLOW}running: Bash: ls", id="start"),
+        pytest.param(ToolEnd(LS, ok("ls")), f"{GREEN}success: Bash: ls", id="exit-0"),
         pytest.param(
             ToolEnd(LS, BashResult.completed("ls", "", "", 2)),
-            f"{RED}failure (exit 2): ls",
+            f"{RED}failure: Bash: ls",
             id="exit-2",
         ),
-        # must not fall through to the catch-all failure case above it
         pytest.param(
-            ToolEnd(LS, BashResult.timeout("ls")), f"{RED}timeout: ls", id="timeout"
+            ToolEnd(LS, BashResult.timeout("ls")),
+            f"{RED}failure: Bash: ls",
+            id="timeout",
         ),
-        pytest.param(ToolCancelled(LS), f"{RED}cancelled: ls", id="cancelled"),
+        pytest.param(ToolCancelled(LS), f"{RED}cancelled: Bash: ls", id="cancelled"),
+        # tool-agnostic: a skill goes through the same arms
+        pytest.param(ToolStart(PDF), f"{YELLOW}running: Skill: pdf", id="skill-start"),
+        pytest.param(
+            ToolEnd(PDF, SkillResult("pdf", None, ())),
+            f"{RED}failure: Skill: pdf",
+            id="skill-unknown",
+        ),
     ],
 )
 def test_print_event(
