@@ -18,7 +18,7 @@ from textual.widgets import Footer, Static, TextArea
 
 from koding_agent.agent import (
     DEFAULT_MAX_TURNS,
-    BashResult,
+    ToolResult,
     Context,
     Event,
     LlmCall,
@@ -42,12 +42,9 @@ DEFAULT_MODEL = "unknown-model"
 type Status = Literal["running", "ok", "failed", "cancelled"]
 
 
-def status_for(result: BashResult) -> Status:
+def status_for(result: ToolResult) -> Status:
     """The one place that decides what counts as a failed tool call."""
-    if result.timed_out or result.returncode != 0:
-        return "failed"
-    return "ok"
-
+    return result.status
 
 class ToolRow(Horizontal):
     """One tool call: a coloured bullet and the command on a single line.
@@ -119,7 +116,7 @@ class ToolStarted(Message):
 
 
 class ToolFinished(Message):
-    def __init__(self, tool: ToolCall, result: BashResult) -> None:
+    def __init__(self, tool: ToolCall, result: ToolResult) -> None:
         super().__init__()
         self.tool = tool
         self.result = result
