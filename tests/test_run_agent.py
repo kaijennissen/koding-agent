@@ -8,9 +8,9 @@ import pytest
 
 from fakes import replies
 from koding_agent.agent import (
+    COMMAND_TIMEOUT,
     MIXED_ACTIONS_ERROR,
     SKILLS_PROMPT,
-    SYSTEM_PROMPT,
     BashResult,
     Context,
     Event,
@@ -67,7 +67,7 @@ def tool_log(events: list[Event]) -> list[tuple[str, str]]:
 
 @pytest.fixture
 def history() -> list[Message]:
-    return [{"role": "system", "content": SYSTEM_PROMPT}, user("task")]
+    return [{"role": "system", "content": build_system_prompt()}, user("task")]
 
 
 class TestRunAgent:
@@ -145,6 +145,21 @@ class TestRunAgent:
         ]
         assert history[3] == user("\n\n".join(observations))  # ... command order
 
+    async def test_command_timeout_is_enforced(self, history: list[Message]) -> None:
+        bash = "<action><bash>sleep 5</bash></action>"
+        expected = format_bash_result(BashResult.timeout("sleep 5"))
+
+        async with asyncio.timeout(2):
+            await run_agent(
+                history,
+                5,
+                replies(bash, EXIT_DONE),
+                NO_SKILLS,
+                command_timeout=0.1,
+            )
+
+        assert history[3] == user(expected)
+
     async def test_llm_error_propagates_and_the_failed_turn_adds_nothing(
         self, history: list[Message]
     ) -> None:
@@ -201,14 +216,25 @@ def test_load_context_absent_or_empty(tmp_path: Path, content: str | None) -> No
 def test_system_prompt_includes_context(tmp_path: Path, with_context: bool) -> None:
     path = tmp_path / "AGENTS.md"
     prompt = build_system_prompt(Context(path, "be nice") if with_context else None)
-    assert prompt.startswith(SYSTEM_PROMPT)
+    assert prompt.startswith(build_system_prompt())
     assert (f"## {path}" in prompt and "be nice" in prompt) == with_context
+
+
+@pytest.mark.parametrize(
+    "command_timeout,shown", [(COMMAND_TIMEOUT, "120s"), (7, "7s"), (2.5, "2.5s")]
+)
+def test_system_prompt_announces_the_command_timeout(
+    command_timeout: float, shown: str
+) -> None:
+    """The model is told the limit the harness enforces, not a hard-coded one."""
+    prompt = build_system_prompt(command_timeout=command_timeout)
+    assert f"a command is killed after {shown}" in prompt
 
 
 @pytest.mark.parametrize("catalog", ["", "- pdf: Work with PDFs"])
 def test_system_prompt_lists_skills_only_when_there_are_some(catalog: str) -> None:
     prompt = build_system_prompt(None, catalog)
-    assert prompt.startswith(SYSTEM_PROMPT)
+    assert prompt.startswith(build_system_prompt())
     assert (SKILLS_PROMPT in prompt and catalog in prompt) == bool(catalog)
 
 

@@ -16,6 +16,7 @@ from textual.message import Message
 from textual.widgets import Footer, Static, TextArea
 
 from koding_agent.agent import (
+    COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
     Context,
     Event,
@@ -165,6 +166,7 @@ class AgentApp(App[None]):
         skills: SkillLibrary = SkillLibrary({}),
         model: str = DEFAULT_MODEL,
         max_turns: int = DEFAULT_MAX_TURNS,
+        command_timeout: float = COMMAND_TIMEOUT,
         first_prompt: str | None = None,
         context: Context | None = None,
     ) -> None:
@@ -174,11 +176,14 @@ class AgentApp(App[None]):
         self.call = call
         self.model = model
         self.max_turns = max_turns
+        self.command_timeout = command_timeout
         self.skills = skills
         self.messages: list[ChatMessage] = [
             {
                 "role": "system",
-                "content": build_system_prompt(context, skills.catalog()),
+                "content": build_system_prompt(
+                    context, skills.catalog(), command_timeout=command_timeout
+                ),
             }
         ]
         self.busy = False
@@ -278,6 +283,7 @@ class AgentApp(App[None]):
                 call=self.call,
                 skills=self.skills,
                 on_event=self.forward_event,
+                command_timeout=self.command_timeout,
             )
             await self.add_message(answer, "assistant")
         except LlmError as e:

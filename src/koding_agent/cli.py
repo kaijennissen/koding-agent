@@ -19,6 +19,7 @@ import httpx2
 
 from koding_agent import __version__
 from koding_agent.agent import (
+    COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
     MODEL,
     RED,
@@ -66,8 +67,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "-t", "--max-turns", default=DEFAULT_MAX_TURNS, type=int, help="max turns"
     )
     parser.add_argument(
-        "--timeout",
-        default=60,
+        "--command-timeout",
+        default=COMMAND_TIMEOUT,
         type=float,
         help="seconds a bash command may run before it is killed (default: %(default)s)",
     )
@@ -103,6 +104,7 @@ def select_mode(args: argparse.Namespace) -> Mode:
 async def run_headless(
     prompt: str,
     max_turns: int,
+    command_timeout: float,
     skills: SkillLibrary,
     context: Context | None = None,
 ) -> None:
@@ -110,7 +112,9 @@ async def run_headless(
         messages: list[Message] = [
             {
                 "role": "system",
-                "content": build_system_prompt(context, skills.catalog()),
+                "content": build_system_prompt(
+                    context, skills.catalog(), command_timeout=command_timeout
+                ),
             },
             {"role": "user", "content": prompt},
         ]
@@ -121,6 +125,7 @@ async def run_headless(
                 call=partial(llm_call, client),
                 skills=skills,
                 on_event=print_event,
+                command_timeout=command_timeout,
             )
         except LlmError as e:
             sys.exit(f"{RED}{e}{RESET}")  # one-shot: report and fail
@@ -128,14 +133,19 @@ async def run_headless(
 
 
 async def run_plain(
-    max_turns: int, skills: SkillLibrary, context: Context | None = None
+    max_turns: int,
+    command_timeout: float,
+    skills: SkillLibrary,
+    context: Context | None = None,
 ) -> None:
     async with ollama_client() as client:
         call = partial(llm_call, client)
         messages: list[Message] = [
             {
                 "role": "system",
-                "content": build_system_prompt(context, skills.catalog()),
+                "content": build_system_prompt(
+                    context, skills.catalog(), command_timeout=command_timeout
+                ),
             }
         ]
         print_banner(MODEL, context.path.name if context else None)
@@ -151,6 +161,7 @@ async def run_plain(
                     call=call,
                     skills=skills,
                     on_event=print_event,
+                    command_timeout=command_timeout,
                 )
             except LlmError as e:
                 # Keep the session: history is still valid, so the user can retry.
@@ -162,6 +173,7 @@ async def run_plain(
 async def run_tui(
     max_turns: int,
     first_prompt: str | None,
+    command_timeout: float,
     skills: SkillLibrary,
     context: Context | None = None,
 ) -> None:
@@ -173,6 +185,7 @@ async def run_tui(
             model=MODEL,
             max_turns=max_turns,
             first_prompt=first_prompt,
+            command_timeout=command_timeout,
             skills=skills,
             context=context,
         )
@@ -181,7 +194,6 @@ async def run_tui(
 
 def cli(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
-    # tool_fn = partial(run_bash_tool, timeout=args.timeout)
     context = None if args.no_context else load_context()
     skills = load_skills(args.skills_dir)
     match select_mode(args):
@@ -190,6 +202,7 @@ def cli(argv: Sequence[str] | None = None) -> None:
                 run_headless(
                     prompt=args.headless_prompt,
                     max_turns=args.max_turns,
+                    command_timeout=args.command_timeout,
                     skills=skills,
                     context=context,
                 )
@@ -198,6 +211,7 @@ def cli(argv: Sequence[str] | None = None) -> None:
             asyncio.run(
                 run_plain(
                     max_turns=args.max_turns,
+                    command_timeout=args.command_timeout,
                     skills=skills,
                     context=context,
                 )
@@ -212,6 +226,7 @@ def cli(argv: Sequence[str] | None = None) -> None:
                 run_tui(
                     max_turns=args.max_turns,
                     first_prompt=args.prompt,
+                    command_timeout=args.command_timeout,
                     skills=skills,
                     context=context,
                 )
