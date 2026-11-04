@@ -19,12 +19,12 @@ from typing import Literal
 import httpx2
 
 from koding_agent import __version__
-from koding_agent.agent import (
+from koding_agent.banner import RESET, print_banner, prompt_text
+from koding_agent.console import RED, print_event
+from koding_agent.core import (
     DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
     DEFAULT_MODEL,
-    RED,
-    RESET,
     Context,
     LlmError,
     Message,
@@ -33,10 +33,8 @@ from koding_agent.agent import (
     llm_call,
     load_context,
     load_skills,
-    print_event,
     run_agent,
 )
-from koding_agent.banner import print_banner, prompt_text
 
 DEFAULT_OLLAMA_URL = "http://host.docker.internal:11434"  # the Docker host gateway
 LLM_TIMEOUT = 120  # seconds per model request; without streaming, the whole reply

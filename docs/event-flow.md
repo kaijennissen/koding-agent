@@ -1,8 +1,18 @@
 # How events travel between layers
 
-The core (`agent.py`) knows nothing about any UI. It reports progress through
-one callback, `on_event`, which must return immediately. Each front end supplies
-its own callback: `print_event` for the CLI, `AgentApp.forward_event` for the TUI.
+The core (the `koding_agent.core` package) knows nothing about any UI. It
+reports progress through one callback, `on_event`, which must return
+immediately. Each front end supplies its own callback: `print_event`
+(`koding_agent.console`) for the CLI, `AgentApp.forward_event` for the TUI.
+
+Where things live: the event types, `emit` and `run_tool` are in
+`core/events.py`; `run_agent` is in `core/loop.py`; the concrete tools
+(`core/tools/bash.py`, `core/tools/skills.py`) know nothing about events.
+`events.py` depends on the tools only through the neutral `ToolCall` /
+`ToolResult` / `RunTool` types in `core/tools/__init__.py`, and the loop wires
+tools and events together. Dependencies point one way:
+`cli`/`console`/`tui` → `core` facade → `loop` → `events` → `tools`.
+Import-boundary tests in `tests/test_core_structure.py` guard this.
 
 ## Sequence: one turn, one tool call (TUI)
 

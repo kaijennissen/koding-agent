@@ -1,6 +1,6 @@
 """Test doubles: a scripted model for the LlmCall seam, and canned tool results."""
 
-from koding_agent.agent import BashResult, LlmCall, Message
+from koding_agent.core import BashResult, LlmCall, Message
 
 
 def replies(*script: str | Exception) -> LlmCall:
