@@ -44,3 +44,10 @@ repos:
         language: system
         pass_filenames: false
         types_or: [python]
+
+      - id: import-linter
+        name: import-linter
+        entry: uv run --locked lint-imports
+        language: system
+        pass_filenames: false
+        types_or: [python, toml]
