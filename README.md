@@ -43,7 +43,7 @@ What it does today:
 - **Hardened container** – read-only root filesystem, all capabilities dropped,
   non-root user, resource limits, and an independent clone as the only writable
   project state. Design: [`thoughts/shared/plans/001_hardened_agent_container_design.md`](thoughts/shared/plans/001_hardened_agent_container_design.md).
-- **Quality gates** – ruff, pyright (strict), pytest, pre-commit, and CI.
+- **Quality gates** – ruff, pyright (strict), import-linter, pytest, pre-commit, and CI.
 
 Known limits: one model backend (Ollama), no file-edit tool beyond what bash
 offers (arguably not a limit, see below), no persistence between sessions, and
@@ -74,6 +74,7 @@ host instead, point it elsewhere with a full URL:
 uv run ruff check .     # lint
 uv run ruff format .    # format
 uv run pyright          # type-check
+uv run lint-imports     # import boundaries (contracts in pyproject.toml)
 uv run pytest           # test
 ```
 
@@ -99,7 +100,9 @@ src/koding_agent/
 
 Front ends (`cli`, `console`, `tui`) depend on `koding_agent.core`; nothing in
 core imports them, and modules inside core import each other directly, never via
-the `koding_agent.core` facade. `tests/test_core_structure.py` enforces this.
+the `koding_agent.core` facade. `import-linter` (`uv run lint-imports`) enforces
+the core/front-end boundary and the layering inside core; the contracts are in
+`pyproject.toml`.
 
 **Breaking change:** `koding_agent.agent` is removed, with no compatibility shim.
 Import the supported API from `koding_agent.core` (`run_agent`, `LlmError`,
