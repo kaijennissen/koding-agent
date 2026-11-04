@@ -35,9 +35,13 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# importlib mode: test files may share a basename across directories.
+# pythonpath keeps the shared `fakes` module importable.
+pythonpath = ["tests"]
 addopts = [
     "--strict-markers",
     "--strict-config",
+    "--import-mode=importlib",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
