@@ -90,7 +90,7 @@ def explicit_imports(name: str, path: Path) -> set[str]:
                 base = f"{anchor}.{base}" if base else anchor
             for alias in node.names:
                 sub = f"{base}.{alias.name}"
-                found.add(sub if sub in MODULES else base)
+                found.add(sub if sub in MODULES or sub in PRESENTATION else base)
     return found
 
 
