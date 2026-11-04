@@ -77,6 +77,37 @@ uv run pyright          # type-check
 uv run pytest           # test
 ```
 
+## Layout
+
+```text
+src/koding_agent/
+  core/             # the agent: knows nothing about any UI
+    __init__.py     # curated public API (re-exports only)
+    loop.py         # run_agent and turn orchestration
+    context.py      # AGENTS.md project context
+    prompts.py      # system prompt templates and construction
+    protocol.py     # action parsing and protocol errors
+    events.py       # event types, emission and tool lifecycle
+    llm.py          # message/call types and the Ollama client
+    limits.py       # timeout and output limits shared by prompts and Bash tool
+    tools/          # bash.py, skills.py
+  console.py        # CLI event printing and terminal colours
+  banner.py
+  cli.py
+  tui/
+```
+
+Front ends (`cli`, `console`, `tui`) depend on `koding_agent.core`; nothing in
+core imports them, and modules inside core import each other directly, never via
+the `koding_agent.core` facade. `tests/test_core_structure.py` enforces this.
+
+**Breaking change:** `koding_agent.agent` is removed, with no compatibility shim.
+Import the supported API from `koding_agent.core` (`run_agent`, `LlmError`,
+`build_system_prompt`, event types, ...), internal helpers from their core
+submodule (e.g. `koding_agent.core.protocol.parse_action`,
+`koding_agent.core.tools.bash.run_bash_tool`), and `print_event` and the colour
+constants from `koding_agent.console`.
+
 ## Modes
 
 ```sh

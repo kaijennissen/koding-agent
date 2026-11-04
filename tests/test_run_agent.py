@@ -7,10 +7,9 @@ from pathlib import Path
 import pytest
 
 from fakes import replies
-from koding_agent.agent import (
+from koding_agent.cli import parse_args
+from koding_agent.core import (
     DEFAULT_COMMAND_TIMEOUT,
-    MIXED_ACTIONS_ERROR,
-    SKILLS_PROMPT,
     BashResult,
     Context,
     Event,
@@ -24,12 +23,13 @@ from koding_agent.agent import (
     ToolStart,
     TurnStart,
     build_system_prompt,
-    format_bash_result,
-    format_skill_result,
     load_context,
     run_agent,
 )
-from koding_agent.cli import parse_args
+from koding_agent.core.prompts import SKILLS_PROMPT
+from koding_agent.core.protocol import MIXED_ACTIONS_ERROR
+from koding_agent.core.tools.bash import format_bash_result
+from koding_agent.core.tools.skills import format_skill_result
 
 BASH_ECHO = "<action><bash>echo hi</bash></action>"
 EXIT_DONE = "<action><exit>done</exit></action>"

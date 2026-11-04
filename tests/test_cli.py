@@ -3,7 +3,6 @@
 import pytest
 
 from koding_agent import cli
-from koding_agent.agent import DEFAULT_COMMAND_TIMEOUT, DEFAULT_MODEL
 from koding_agent.cli import (
     DEFAULT_OLLAMA_URL,
     Mode,
@@ -11,6 +10,7 @@ from koding_agent.cli import (
     parse_args,
     select_mode,
 )
+from koding_agent.core import DEFAULT_COMMAND_TIMEOUT, DEFAULT_MODEL
 
 
 @pytest.mark.parametrize(

@@ -15,7 +15,8 @@ from textual.containers import Horizontal, VerticalScroll
 from textual.message import Message
 from textual.widgets import Footer, Static, TextArea
 
-from koding_agent.agent import (
+from koding_agent.banner import render_banner
+from koding_agent.core import (
     DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
     Context,
@@ -32,10 +33,9 @@ from koding_agent.agent import (
     build_system_prompt,
     run_agent,
 )
-from koding_agent.agent import (
+from koding_agent.core import (
     Message as ChatMessage,
 )
-from koding_agent.banner import render_banner
 
 type Status = Literal["running", "ok", "failed", "cancelled"]
 

@@ -8,12 +8,9 @@ from typing import Any
 import pytest
 
 from fakes import ok
-from koding_agent.agent import (
-    GREEN,
-    GREY,
-    RED,
-    RESET,
-    YELLOW,
+from koding_agent.banner import GREY, RESET
+from koding_agent.console import GREEN, RED, YELLOW, print_event
+from koding_agent.core import (
     BashCall,
     BashResult,
     Event,
@@ -23,10 +20,8 @@ from koding_agent.agent import (
     ToolEnd,
     ToolStart,
     TurnStart,
-    emit,
-    print_event,
-    run_tool,
 )
+from koding_agent.core.events import emit, run_tool
 
 LS = BashCall(id="1", cmd="ls")
 PDF = SkillCall(id="2", name="pdf")

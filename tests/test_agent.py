@@ -7,14 +7,8 @@ import httpx2
 import pytest
 from httpx2 import AsyncClient
 
-from koding_agent.agent import (
-    MIXED_ACTIONS_ERROR,
-    LlmError,
-    Message,
-    llm_call,
-    parse_action,
-    parse_xml,
-)
+from koding_agent.core import LlmError, Message, llm_call
+from koding_agent.core.protocol import MIXED_ACTIONS_ERROR, parse_action, parse_xml
 
 
 @pytest.mark.parametrize(
