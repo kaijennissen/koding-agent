@@ -99,7 +99,7 @@ src/koding_agent/
 
 Front ends (`cli`, `console`, `tui`) depend on `koding_agent.core`; nothing in
 core imports them, and modules inside core import each other directly, never via
-the `koding_agent.core` facade. `tests/test_core_structure.py` enforces this.
+the `koding_agent.core` facade.
 
 **Breaking change:** `koding_agent.agent` is removed, with no compatibility shim.
 Import the supported API from `koding_agent.core` (`run_agent`, `LlmError`,
