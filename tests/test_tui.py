@@ -16,7 +16,7 @@ from textual.pilot import Pilot
 from textual.widgets import Static
 
 from fakes import ok, replies
-from koding_agent.agent import (
+from koding_agent.core import (
     BashCall,
     BashResult,
     Event,

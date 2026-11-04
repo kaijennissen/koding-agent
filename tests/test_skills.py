@@ -4,13 +4,15 @@ from pathlib import Path
 
 import pytest
 
-from koding_agent.agent import (
+from koding_agent.core import (
     Skill,
     SkillCall,
     SkillLibrary,
     SkillResult,
-    format_skill_result,
     load_skills,
+)
+from koding_agent.core.tools.skills import (
+    format_skill_result,
     parse_skill,
     run_skill_tool,
 )

@@ -6,14 +6,9 @@ from pathlib import Path
 
 import pytest
 
-from koding_agent.agent import (
-    MAX_OUTPUT_CHARS,
-    BashCall,
-    BashResult,
-    format_bash_result,
-    run_bash_tool,
-    truncate,
-)
+from koding_agent.core import BashCall, BashResult
+from koding_agent.core.limits import MAX_OUTPUT_CHARS
+from koding_agent.core.tools.bash import format_bash_result, run_bash_tool, truncate
 
 
 def bash(cmd: str) -> BashCall:
