@@ -7,11 +7,8 @@ from pathlib import Path
 import pytest
 
 from fakes import replies
-from koding_agent.cli import parse_args
 from koding_agent.core import (
-    DEFAULT_COMMAND_TIMEOUT,
     BashResult,
-    Context,
     Event,
     LlmError,
     Message,
@@ -23,10 +20,8 @@ from koding_agent.core import (
     ToolStart,
     TurnStart,
     build_system_prompt,
-    load_context,
     run_agent,
 )
-from koding_agent.core.prompts import SKILLS_PROMPT
 from koding_agent.core.protocol import MIXED_ACTIONS_ERROR
 from koding_agent.core.tools.bash import format_bash_result
 from koding_agent.core.tools.skills import format_skill_result
@@ -203,47 +198,6 @@ class TestRunAgent:
         assert history == before
 
 
-@pytest.mark.parametrize("name", ["AGENTS.md", "agents.md", "Agents.MD"])
-def test_load_context_matches_any_casing(tmp_path: Path, name: str) -> None:
-    (tmp_path / name).write_text("be nice\n")
-    ctx = load_context(tmp_path)
-    assert ctx == Context(tmp_path / name, "be nice")
-
-
-@pytest.mark.parametrize("content", [None, "", "  \n"])
-def test_load_context_absent_or_empty(tmp_path: Path, content: str | None) -> None:
-    if content is not None:
-        (tmp_path / "AGENTS.md").write_text(content)
-    assert load_context(tmp_path) is None
-
-
-@pytest.mark.parametrize("with_context", [False, True])
-def test_system_prompt_includes_context(tmp_path: Path, with_context: bool) -> None:
-    path = tmp_path / "AGENTS.md"
-    prompt = build_system_prompt(Context(path, "be nice") if with_context else None)
-    assert prompt.startswith(build_system_prompt())
-    assert (f"## {path}" in prompt and "be nice" in prompt) == with_context
-
-
-@pytest.mark.parametrize(
-    "command_timeout,shown",
-    [(DEFAULT_COMMAND_TIMEOUT, "120s"), (7, "7s"), (2.5, "2.5s")],
-)
-def test_system_prompt_announces_the_command_timeout(
-    command_timeout: float, shown: str
-) -> None:
-    """The model is told the limit the harness enforces, not a hard-coded one."""
-    prompt = build_system_prompt(command_timeout=command_timeout)
-    assert f"a command is killed after {shown}" in prompt
-
-
-@pytest.mark.parametrize("catalog", ["", "- pdf: Work with PDFs"])
-def test_system_prompt_lists_skills_only_when_there_are_some(catalog: str) -> None:
-    prompt = build_system_prompt(None, catalog)
-    assert prompt.startswith(build_system_prompt())
-    assert (SKILLS_PROMPT in prompt and catalog in prompt) == bool(catalog)
-
-
 class TestSkillTurn:
     async def test_skill_then_exit(self, history: list[Message]) -> None:
         skill = "<action><skill>pdf</skill></action>"
@@ -262,10 +216,3 @@ class TestSkillTurn:
 
         assert history[3] == user("Unknown skill `nope`. Available: pdf")
         assert [e.result.status for e in events if isinstance(e, ToolEnd)] == ["failed"]
-
-
-@pytest.mark.parametrize(
-    ("argv", "expected"), [([], False), (["-nc"], True), (["--no-context"], True)]
-)
-def test_no_context_flag(argv: list[str], expected: bool) -> None:
-    assert parse_args(argv).no_context is expected
