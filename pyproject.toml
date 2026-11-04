@@ -29,6 +29,7 @@ dev = [
     "pyright",
     "pytest-asyncio>=1.4.1",
     "types-pyyaml>=6.0.12.20261103",
+    "import-linter>=2.15",
 ]
 
 
@@ -63,3 +64,30 @@ ignore = [
 include = ["src", "tests"]
 typeCheckingMode = "strict"
 pythonVersion = "3.14"
+
+[tool.importlinter]
+root_packages = ["koding_agent", "textual", "rich"]
+include_external_packages = true
+
+[[tool.importlinter.contracts]]
+name = "Core knows nothing about front ends"
+type = "forbidden"
+source_modules = ["koding_agent.core"]
+forbidden_modules = [
+    "koding_agent.cli",
+    "koding_agent.console",
+    "koding_agent.banner",
+    "koding_agent.tui",
+    "textual",
+    "rich",
+]
+
+[[tool.importlinter.contracts]]
+name = "Core layering"
+type = "layers"
+layers = [
+    "koding_agent.core.loop",
+    "koding_agent.core.events | koding_agent.core.prompts",
+    "koding_agent.core.tools",
+    "koding_agent.core.limits | koding_agent.core.context | koding_agent.core.llm | koding_agent.core.protocol",
+]
