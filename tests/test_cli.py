@@ -95,3 +95,10 @@ def test_tui_without_a_terminal_exits_with_a_hint(
     with pytest.raises(SystemExit) as exc:
         cli.cli([])
     assert "-p" in str(exc.value.code)
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"), [([], False), (["-nc"], True), (["--no-context"], True)]
+)
+def test_no_context_flag(argv: list[str], expected: bool) -> None:
+    assert parse_args(argv).no_context is expected
