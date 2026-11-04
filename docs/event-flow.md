@@ -12,7 +12,6 @@ Where things live: the event types, `emit` and `run_tool` are in
 `ToolResult` / `RunTool` types in `core/tools/__init__.py`, and the loop wires
 tools and events together. Dependencies point one way:
 `cli`/`console`/`tui` → `core` facade → `loop` → `events` → `tools`.
-Import-boundary tests in `tests/test_core_structure.py` guard this.
 
 ## Sequence: one turn, one tool call (TUI)
 
