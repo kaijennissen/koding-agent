@@ -48,7 +48,12 @@ def ollama_url() -> str:
 
 
 def ollama_client() -> httpx2.AsyncClient:
-    return httpx2.AsyncClient(base_url=ollama_url(), timeout=LLM_TIMEOUT)
+    token = os.environ.get("OPENROUTER_API_KEY")
+    return httpx2.AsyncClient(
+        base_url=ollama_url(),
+        headers={"Authorization": f"Bearer {token}"},
+        timeout=LLM_TIMEOUT,
+    )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
