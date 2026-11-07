@@ -1,5 +1,6 @@
 """Message and call types, and the Ollama client."""
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TypedDict, cast
 
@@ -23,6 +24,38 @@ class LlmError(Exception):
     Front ends catch this one type and keep the session alive; the history is
     unchanged by the failed call, so the same run can simply be retried.
     """
+
+
+_PROVIDERS = {}
+
+
+class ProviderRegistry:
+    """Registry for providers"""
+
+    def register(self, name: str, provider):
+        def wrapper():
+            _PROVIDERS[name] = provider
+
+        return wrapper
+
+    def get_provider(self, provider: str):
+        return _PROVIDERS.get(provider)
+
+
+class OllamaProvider:
+    def __init__(self, base_url: str = "http://localhost:11434", timeout=120):
+        self.base_url = base_url
+        self.client: AsyncClient | None = None
+        self.timeout = timeout
+
+    async def call_llm(self, model: str, messages: list[Message]):
+        if self.client:
+            async with self.client as client:
+                return await call_ollama(client=client, model=model, messages=messages)
+        else:
+            self.client = AsyncClient(base_url=self.base_url, timeout=self.timeout)
+            async with self.client as client:
+                return await call_ollama(client=client, model=model, messages=messages)
 
 
 async def call_ollama(client: AsyncClient, model: str, messages: list[Message]) -> str:
@@ -70,3 +103,17 @@ async def call_openrouter(
         return cast(str, response.json()["choices"][0]["message"]["content"])
     except (ValueError, KeyError, TypeError) as e:
         raise LlmError(f"Unexpected reply from the model: {response.text}") from e
+
+
+async def main():
+    msgs = [{"role": "user", "content": "Why is the sky blue?"}]
+    model = "qwen3.8:27b-dflash2-nvfp4"
+    provider = OllamaProvider()
+    msg = await provider.call_llm(model=model, messages=msgs)
+    print(msg)
+    msg = await provider.call_llm(model=model, messages=msgs)
+    print(msg)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
