@@ -29,33 +29,35 @@ class LlmError(Exception):
 _PROVIDERS = {}
 
 
-class ProviderRegistry:
-    """Registry for providers"""
+def register(key):
+    def decorator(cls):
+        _PROVIDERS[key] = cls
 
-    def register(self, name: str, provider):
-        def wrapper():
-            _PROVIDERS[name] = provider
+        def wrapper(*args, **kwargs):
+            cls()
 
-        return wrapper
+        return cls
 
-    def get_provider(self, provider: str):
-        return _PROVIDERS.get(provider)
+    return decorator
 
 
+print(_PROVIDERS)
+
+
+@register("ollama")
 class OllamaProvider:
     def __init__(self, base_url: str = "http://localhost:11434", timeout=120):
         self.base_url = base_url
-        self.client: AsyncClient | None = None
         self.timeout = timeout
 
-    async def call_llm(self, model: str, messages: list[Message]):
-        if self.client:
-            async with self.client as client:
-                return await call_ollama(client=client, model=model, messages=messages)
-        else:
-            self.client = AsyncClient(base_url=self.base_url, timeout=self.timeout)
-            async with self.client as client:
-                return await call_ollama(client=client, model=model, messages=messages)
+    def get_client(self):
+        return AsyncClient(base_url=self.base_url, timeout=self.timeout)
+
+    async def call_llm(self, client, model: str, messages: list[Message]):
+        return await call_ollama(client=client, model=model, messages=messages)
+
+
+print(_PROVIDERS)
 
 
 async def call_ollama(client: AsyncClient, model: str, messages: list[Message]) -> str:
@@ -109,9 +111,11 @@ async def main():
     msgs = [{"role": "user", "content": "Why is the sky blue?"}]
     model = "qwen3.8:27b-dflash2-nvfp4"
     provider = OllamaProvider()
-    msg = await provider.call_llm(model=model, messages=msgs)
+    async with provider.get_client() as client:
+        msg = await provider.call_llm(client=client, model=model, messages=msgs)
     print(msg)
-    msg = await provider.call_llm(model=model, messages=msgs)
+    async with provider.get_client() as client:
+        msg = await provider.call_llm(client=client, model=model, messages=msgs)
     print(msg)
 
 
