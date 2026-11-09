@@ -36,16 +36,17 @@ class ProviderConfig:
 
 class ProviderRegistryFactory:
     _providers: dict = {}
-    
+
     @classmethod
     def register(cls, name: str):
         def wrapper(wrpd_cls):
             if name in cls._providers:
                 raise ValueError(f"{name} is already registered.")
-            cls._providers[name] = wrpd_cls 
+            cls._providers[name] = wrpd_cls
             return wrpd_cls
+
         return wrapper
-    
+
     @classmethod
     def from_config(cls, cfg):
         if cfg.provider not in cls._providers:
@@ -71,10 +72,8 @@ def register(key):
 
 print(_PROVIDERS)
 
-registry = ProviderRegistryFactory
 
-
-@registry.register(name="ollama")
+@ProviderRegistryFactory.register(name="ollama")
 class OllamaProvider:
     def __init__(
         self,
@@ -153,7 +152,7 @@ async def main():
     msgs = [{"role": "user", "content": "Why is the sky blue?"}]
     cfg = ProviderConfig(provider="ollama", model="qwen3.8:27b-dflash2-nvfp4")
 
-    provider = registry.from_config(cfg=cfg)
+    provider = ProviderRegistryFactory.from_config(cfg=cfg)
     async with provider.get_client() as client:
         msg = await provider.call_llm(client=client, messages=msgs)
     print(msg)
