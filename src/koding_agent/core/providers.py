@@ -36,22 +36,22 @@ class ProviderConfig:
 
 class ProviderRegistryFactory:
     _providers: dict = {}
-
-    def register(self, name: str):
-        def wrapper(cls):
-            if name in self._providers:
+    
+    @classmethod
+    def register(cls, name: str):
+        def wrapper(wrpd_cls):
+            if name in cls._providers:
                 raise ValueError(f"{name} is already registered.")
-            self._providers[name] = cls
-            return cls
-
+            cls._providers[name] = wrpd_cls 
+            return wrpd_cls
         return wrapper
-
-    def from_config(self, cfg):
-        if cfg.provider not in self._providers:
+    
+    @classmethod
+    def from_config(cls, cfg):
+        if cfg.provider not in cls._providers:
             raise ValueError("No such provider: {cfg.provider}")
 
-        provider = self._providers[cfg.provider]
-        return provider.from_config(cfg=cfg)
+        return cls._providers[cfg.provider].from_config(cfg=cfg)
 
 
 _PROVIDERS = {}
@@ -71,7 +71,7 @@ def register(key):
 
 print(_PROVIDERS)
 
-registry = ProviderRegistryFactory()
+registry = ProviderRegistryFactory
 
 
 @registry.register(name="ollama")
