@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TypedDict, cast
 
 import httpx2
@@ -26,6 +27,33 @@ class LlmError(Exception):
     """
 
 
+@dataclass
+class ProviderConfig:
+    provider: str
+    model: str
+    base_url: str = "http://localhost:11434"
+
+
+class ProviderRegistryFactory:
+    _providers: dict = {}
+
+    def register(self, name: str):
+        def wrapper(cls):
+            if name in self._providers:
+                raise ValueError(f"{name} is already registered.")
+            self._providers[name] = cls
+            return cls
+
+        return wrapper
+
+    def from_config(self, cfg):
+        if cfg.provider not in self._providers:
+            raise ValueError("No such provider: {cfg.provider}")
+
+        provider = self._providers[cfg.provider]
+        return provider.from_config(cfg=cfg)
+
+
 _PROVIDERS = {}
 
 
@@ -34,7 +62,7 @@ def register(key):
         _PROVIDERS[key] = cls
 
         def wrapper(*args, **kwargs):
-            cls()
+            cls(*args, **kwargs)
 
         return cls
 
@@ -43,18 +71,32 @@ def register(key):
 
 print(_PROVIDERS)
 
+registry = ProviderRegistryFactory()
 
-@register("ollama")
+
+@registry.register(name="ollama")
 class OllamaProvider:
-    def __init__(self, base_url: str = "http://localhost:11434", timeout=120):
+    def __init__(
+        self,
+        model: str | None = None,
+        base_url: str = "http://localhost:11434",
+        timeout: int = 120,
+    ):
         self.base_url = base_url
         self.timeout = timeout
+        self.model = model
 
     def get_client(self):
         return AsyncClient(base_url=self.base_url, timeout=self.timeout)
 
-    async def call_llm(self, client, model: str, messages: list[Message]):
-        return await call_ollama(client=client, model=model, messages=messages)
+    async def call_llm(self, client, messages: list[Message], model: str | None = None):
+        return await call_ollama(
+            client=client, model=self.model or model, messages=messages
+        )
+
+    @classmethod
+    def from_config(cls, cfg):
+        return OllamaProvider(model=cfg.model, base_url=cfg.base_url)
 
 
 print(_PROVIDERS)
@@ -109,11 +151,13 @@ async def call_openrouter(
 
 async def main():
     msgs = [{"role": "user", "content": "Why is the sky blue?"}]
-    model = "qwen3.8:27b-dflash2-nvfp4"
-    provider = OllamaProvider()
+    cfg = ProviderConfig(provider="ollama", model="qwen3.8:27b-dflash2-nvfp4")
+
+    provider = registry.from_config(cfg=cfg)
     async with provider.get_client() as client:
-        msg = await provider.call_llm(client=client, model=model, messages=msgs)
+        msg = await provider.call_llm(client=client, messages=msgs)
     print(msg)
+    model = "qwen3.8:27b-mlx"
     async with provider.get_client() as client:
         msg = await provider.call_llm(client=client, model=model, messages=msgs)
     print(msg)
