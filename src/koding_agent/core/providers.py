@@ -2,125 +2,134 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import TypedDict, cast
+from typing import Protocol, TypedDict, cast
 
 import httpx2
 from httpx2 import AsyncClient
+from llm import LlmError
 
 DEFAULT_MODEL = "qwen3.8:27b-mlx"
-
 
 class Message(TypedDict):
     role: str
     content: str
 
 
-type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
-
-
-class LlmError(Exception):
-    """The model gave no usable reply. The message is meant for the user.
-
-    Front ends catch this one type and keep the session alive; the history is
-    unchanged by the failed call, so the same run can simply be retried.
-    """
-
-
 @dataclass
 class ProviderConfig:
     provider: str
-    model: str
-    base_url: str = "http://localhost:11434"
+    model:str |None=None
+    base_url:str | None=None
+    timeout:int |None=None
 
 
-class ProviderRegistryFactory:
-    _providers: dict = {}
+type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
 
-    @classmethod
-    def register(cls, name: str):
-        def wrapper(wrpd_cls):
-            if name in cls._providers:
-                raise ValueError(f"{name} is already registered.")
-            cls._providers[name] = wrpd_cls
-            return wrpd_cls
-
-        return wrapper
-
-    @classmethod
-    def from_config(cls, cfg):
-        if cfg.provider not in cls._providers:
-            raise ValueError("No such provider: {cfg.provider}")
-
-        return cls._providers[cfg.provider].from_config(cfg=cfg)
+class Provider(Protocol):
+    def complete():
+        ...
+    def aclose():
+        ...
 
 
-_PROVIDERS = {}
-
-
-def register(key):
-    def decorator(cls):
-        _PROVIDERS[key] = cls
-
-        def wrapper(*args, **kwargs):
-            cls(*args, **kwargs)
-
-        return cls
-
-    return decorator
-
-
-print(_PROVIDERS)
-
-
-@ProviderRegistryFactory.register(name="ollama")
 class OllamaProvider:
-    def __init__(
-        self,
-        model: str | None = None,
-        base_url: str = "http://localhost:11434",
-        timeout: int = 120,
-    ):
-        self.base_url = base_url
-        self.timeout = timeout
-        self.model = model
+    def __init__(self,base_url:str="http://localhost:11434",model:str="qwen3.8:27b-mlx",timeout:int=120):
+        self.base_url=base_url
+        self.model=model
+        self.client=AsyncClient(base_url=self.base_url, timeout=timeout)
 
-    def get_client(self):
-        return AsyncClient(base_url=self.base_url, timeout=self.timeout)
+    async def complete(self,messages: list[Message] ) -> str:
+            """Ask Ollama for the next reply; every failure is raised as LlmError."""
+            try:
+                response = await self.client.post(
+                    "/api/chat", json={"model": self.model, "stream": False, "messages": messages}
+                )
+            except httpx2.HTTPError as e:
+                raise LlmError(f"Could not reach the model: {e}") from e
 
-    async def call_llm(self, client, messages: list[Message], model: str | None = None):
-        return await call_ollama(
-            client=client, model=self.model or model, messages=messages
-        )
+            if response.is_error:
+                try:
+                    detail = response.json()["error"]  # Ollama puts its reason here
+                except ValueError, KeyError, TypeError:
+                    detail = response.text
+                raise LlmError(f"Model request failed ({response.status_code}): {detail}")
+
+            try:
+                return cast(str, response.json()["message"]["content"])
+            except (ValueError, KeyError, TypeError) as e:
+                raise LlmError(f"Unexpected reply from the model: {response.text}") from e
+
+    async def aclose(self):
+        self.client.aclose()
 
     @classmethod
-    def from_config(cls, cfg):
-        return OllamaProvider(model=cfg.model, base_url=cfg.base_url)
-
-
-print(_PROVIDERS)
-
-
-async def call_ollama(client: AsyncClient, model: str, messages: list[Message]) -> str:
-    """Ask Ollama for the next reply; every failure is raised as LlmError."""
-    try:
-        response = await client.post(
-            "/api/chat", json={"model": model, "stream": False, "messages": messages}
-        )
-    except httpx2.HTTPError as e:
-        raise LlmError(f"Could not reach the model: {e}") from e
-
-    if response.is_error:
+    def from_config(cls,cfg:ProviderConfig)->Provider:
         try:
-            detail = response.json()["error"]  # Ollama puts its reason here
-        except ValueError, KeyError, TypeError:
-            detail = response.text
-        raise LlmError(f"Model request failed ({response.status_code}): {detail}")
+            return cls(model=cfg.model)
+        except Exception as err:
+            raise LlmError(f"Couldn't instantiat the class: {err}") from err
+
+class OpenrouterProvider:
+    def __init__(self,base_url:str="https://eu.openrouter.ai",model:str="qwen3.8:27b-mlx",timeout:int=120):
+        self.base_url=base_url
+        self.model=model
+        self.client=AsyncClient(base_url=self.base_url, timeout=timeout)
+
+    async def complete(self,messages: list[Message] ) -> str:
+        """Ask OpenRouter for the next reply; every failure is raised as LlmError."""
+        try:
+            response = await self.client.post(
+                "/api/v1/chat/completions",
+                json={"model": self.model, "stream": False, "messages": messages},
+            )
+        except httpx2.HTTPError as e:
+            raise LlmError(f"Could not reach the model: {e}") from e
+
+        if response.is_error:
+            try:
+                detail = response.json()["error"]  # Ollama puts its reason here
+            except ValueError, KeyError, TypeError:
+                detail = response.text
+            raise LlmError(f"Model request failed ({response.status_code}): {detail}")
+
+        try:
+            return cast(str, response.json()["choices"][0]["message"]["content"])
+        except (ValueError, KeyError, TypeError) as e:
+            raise LlmError(f"Unexpected reply from the model: {response.text}") from e
+
+    async def aclose(self):
+        self.client.aclose()
+
+    @classmethod
+    def from_config(cls,cfg:ProviderConfig)->Provider:
+        # TODO: needs to be fixed in both Providers
+        try:
+            return cls(model=cfg.model)
+        except Exception as err:
+            raise LlmError(f"Couldn't instantiat the class: {err}") from err
+
+_REGISTRY:dict[str,Provider]={"ollama":OllamaProvider}
+
+@asynccontextmanager
+async def open_provider(cfg:ProviderConfig):
+    try:
+        factory=_REGISTRY[cfg.provider].from_config
+    except KeyError as err:
+        raise LlmError(f"Unknown provider: {cfg.provider}; Choose one of {_REGISTRY.keys()}") from err
+
+    provider=factory(cfg) # needs to be here, because otherwise an error during instansiation that doesn't provide a provider errors in finally due to the nonexisting provider variable.
 
     try:
-        return cast(str, response.json()["message"]["content"])
-    except (ValueError, KeyError, TypeError) as e:
-        raise LlmError(f"Unexpected reply from the model: {response.text}") from e
+        yield provider
+
+    finally:
+        await provider.aclose()
+
+
+
+
 
 
 async def call_openrouter(
@@ -152,14 +161,17 @@ async def main():
     msgs = [{"role": "user", "content": "Why is the sky blue?"}]
     cfg = ProviderConfig(provider="ollama", model="qwen3.8:27b-dflash2-nvfp4")
 
-    provider = ProviderRegistryFactory.from_config(cfg=cfg)
-    async with provider.get_client() as client:
-        msg = await provider.call_llm(client=client, messages=msgs)
-    print(msg)
-    model = "qwen3.8:27b-mlx"
-    async with provider.get_client() as client:
-        msg = await provider.call_llm(client=client, model=model, messages=msgs)
-    print(msg)
+    async with open_provider(cfg) as provider:
+        response=await provider.complete(msgs)
+
+    print(response)
+
+
+    cfg = ProviderConfig(provider="ollama", model="qwen3.8:27b-mlx")
+    async with open_provider(cfg) as provider:
+        response=await provider.complete(msgs)
+
+    print(response)
 
 
 if __name__ == "__main__":
