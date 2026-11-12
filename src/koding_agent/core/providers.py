@@ -8,7 +8,8 @@ from typing import Protocol, cast
 
 import httpx2
 from httpx2 import AsyncClient
-from llm import LlmError, Message
+
+from koding_agent.core.llm import LlmError, Message
 
 
 @dataclass
@@ -23,53 +24,64 @@ type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
 
 
 class Provider(Protocol):
-    def complete(self,messages:list[Message]) ->str : ...
+    def complete(self, messages: list[Message]) -> str: ...
     def aclose(): ...
+
 
 # 1) base class
 # 2) pass everything the class knows
+
 
 class _BaseProvider:
     """Shared config handling for all providers"""
 
     @classmethod
-    def from_config(cls,cfg:ProviderConfig)->_BaseProvider:
+    def from_config(cls, cfg: ProviderConfig) -> _BaseProvider:
         try:
             return cls()
         except Exception as err:
             raise LlmError(f"Couldn't instantiate the class: {err}") from err
 
+
+async def post_json(client: AsyncClient, endpoint: str, json: dict):
+    try:
+        return await client.post(endpoint, json=json)
+    except httpx2.HTTPError as e:
+        raise LlmError(f"Could not reach the model: {e}") from e
+
+
 class OllamaProvider:
-    _DEFAUlT_BASE_URL: str= "http://localhost:11434",
-    _DEFAULT_MODEL:str = "qwen3.8:27b-mlx"
-    _DEFAULT_TIMEOUT:int=120
+    _DEFAULT_BASE_URL: str = "http://localhost:11434"
+    _DEFAULT_MODEL: str = "qwen3.8:27b-mlx"
+    _DEFAULT_TIMEOUT: int = 120
 
     def __init__(
         self,
-        base_url:str | None,
-        model: str | None ,
-        timeout: int |None,
-        client: AsyncClient | None
+        base_url: str | None,
+        model: str | None,
+        timeout: int | None,
+        client: AsyncClient | None = None,
     ):
         self.base_url = base_url or self._DEFAULT_BASE_URL
         self.model = model or self._DEFAULT_MODEL
-        self.timeout=timeout or self._DEFAULT_TIMEOUT
-        self.client = client or AsyncClient(base_url=self.base_url, timeout=self.timeout) # makes testing easier
+        self.timeout = timeout or self._DEFAULT_TIMEOUT
+        self.client = client or AsyncClient(
+            base_url=self.base_url, timeout=self.timeout
+        )  # makes testing easier
 
     async def complete(self, messages: list[Message]) -> str:
         """Ask Ollama for the next reply; every failure is raised as LlmError."""
-        try:
-            response = await self.client.post(
-                "/api/chat",
-                json={"model": self.model, "stream": False, "messages": messages},
-            )
-        except httpx2.HTTPError as e:
-            raise LlmError(f"Could not reach the model: {e}") from e
+
+        response = await post_json(
+            client=self.client,
+            endpoint="/api/chat",
+            json={"model": self.model, "stream": False, "messages": messages},
+        )
 
         if response.is_error:
             try:
                 detail = response.json()["error"]  # Ollama puts its reason here
-            except (ValueError, KeyError, TypeError):
+            except ValueError, KeyError, TypeError:
                 detail = response.text
             raise LlmError(f"Model request failed ({response.status_code}): {detail}")
 
@@ -79,32 +91,34 @@ class OllamaProvider:
             raise LlmError(f"Unexpected reply from the model: {response.text}") from e
 
     async def aclose(self):
-        self.client.aclose()
+        await self.client.aclose()
 
     @classmethod
     def from_config(cls, cfg: ProviderConfig) -> OllamaProvider:
         try:
-            return cls(base_url=cfg.base_url,model=cfg.model,timeout=cfg.timeout)
+            return cls(base_url=cfg.base_url, model=cfg.model, timeout=cfg.timeout)
         except Exception as err:
             raise LlmError(f"Couldn't instantiat the class: {err}") from err
 
 
 class OpenrouterProvider:
-    _DEFAUlT_BASE_URL: str= "https://eu.openrouter.ai"
-    _DEFAULT_MODEL:str = "qwen3.8:27b-mlx"
-    _DEFAULT_TIMEOUT:int=10
+    _DEFAUlT_BASE_URL: str = "https://eu.openrouter.ai"
+    _DEFAULT_MODEL: str = "qwen3.8:27b-mlx"
+    _DEFAULT_TIMEOUT: int = 10
 
     def __init__(
         self,
-        base_url: str|None  ,
-        model: str |None,
-        timeout: int |None,
-        client:AsyncClient | None
+        base_url: str | None,
+        model: str | None,
+        timeout: int | None,
+        client: AsyncClient | None = None,
     ):
         self.base_url = base_url or self._DEFAULT_BASE_URL
         self.model = model or self._DEFAULT_MODEL
-        self.timeout=timeout or self._DEFAULT_TIMEOUT
-        self.client = client or AsyncClient(base_url=self.base_url, timeout=self.timeout)
+        self.timeout = timeout or self._DEFAULT_TIMEOUT
+        self.client = client or AsyncClient(
+            base_url=self.base_url, timeout=self.timeout
+        )
 
     async def complete(self, messages: list[Message]) -> str:
         """Ask OpenRouter for the next reply; every failure is raised as LlmError."""
@@ -119,7 +133,7 @@ class OpenrouterProvider:
         if response.is_error:
             try:
                 detail = response.json()["error"]  # Ollama puts its reason here
-            except (ValueError, KeyError, TypeError):
+            except ValueError, KeyError, TypeError:
                 detail = response.text
             raise LlmError(f"Model request failed ({response.status_code}): {detail}")
 
@@ -135,12 +149,15 @@ class OpenrouterProvider:
     def from_config(cls, cfg: ProviderConfig) -> OpenrouterProvider:
         # TODO: needs to be fixed in both Providers
         try:
-            return cls(base_url=cfg.base_url,model=cfg.model,timeout=cfg.timeout)
+            return cls(base_url=cfg.base_url, model=cfg.model, timeout=cfg.timeout)
         except Exception as err:
             raise LlmError(f"Couldn't instantiat the class: {err}") from err
 
 
-_REGISTRY: dict[str, Provider] = {"ollama": OllamaProvider,"openrouter":OpenrouterProvider}
+_REGISTRY: dict[str, Provider] = {
+    "ollama": OllamaProvider,
+    "openrouter": OpenrouterProvider,
+}
 
 
 @asynccontextmanager
@@ -152,9 +169,8 @@ async def open_provider(cfg: ProviderConfig):
             f"Unknown provider: {cfg.provider}; Choose one of {_REGISTRY.keys()}"
         ) from err
 
-    provider = factory(
-        cfg
-    )  # needs to be here, because otherwise an error during instansiation that doesn't provide a provider errors in finally due to the nonexisting provider variable.
+    provider = factory(cfg)
+    # needs to be here, because otherwise an error during instansiation that doesn't provide a provider errors in finally due to the nonexisting provider variable.
 
     try:
         yield provider

@@ -28,11 +28,13 @@ from koding_agent.core import (
     Context,
     LlmError,
     Message,
+    ProviderConfig,
     SkillLibrary,
     build_system_prompt,
     llm_call,
     load_context,
     load_skills,
+    open_provider,
     run_agent,
 )
 
@@ -105,6 +107,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="load skills from DIR/*/SKILL.md",
     )
     parser.add_argument(
+        "--provider",
+        default="ollama",
+        help="Provider to use (default: %(default)s)",
+    )
+    parser.add_argument(
         "-v", "--version", action="version", version=f"%(prog)s {__version__}"
     )
     args = parser.parse_args(argv)
@@ -123,13 +130,13 @@ def select_mode(args: argparse.Namespace) -> Mode:
 
 async def run_headless(
     prompt: str,
-    model: str,
+    cfg: ProviderConfig,
     max_turns: int,
     command_timeout: float,
     skills: SkillLibrary,
     context: Context | None = None,
 ) -> None:
-    async with ollama_client() as client:
+    async with open_provider(cfg) as provider:
         messages: list[Message] = [
             {
                 "role": "system",
@@ -143,7 +150,7 @@ async def run_headless(
             answer, _ = await run_agent(
                 messages,
                 max_turns=max_turns,
-                call=partial(llm_call, client, model),
+                call=provider.complete,
                 skills=skills,
                 on_event=print_event,
                 command_timeout=command_timeout,
@@ -154,14 +161,13 @@ async def run_headless(
 
 
 async def run_plain(
-    model: str,
+    cfg: ProviderConfig,
     max_turns: int,
     command_timeout: float,
     skills: SkillLibrary,
     context: Context | None = None,
 ) -> None:
-    async with ollama_client() as client:
-        call = partial(llm_call, client, model)
+    async with open_provider(cfg) as provider:
         messages: list[Message] = [
             {
                 "role": "system",
@@ -170,7 +176,7 @@ async def run_plain(
                 ),
             }
         ]
-        print_banner(model, context.path.name if context else None, skills.skills)
+        print_banner(cfg.model, context.path.name if context else None, skills.skills)
         while True:
             prompt = input(prompt_text())
             if prompt == "exit":
@@ -180,7 +186,7 @@ async def run_plain(
                 answer, messages = await run_agent(
                     messages,
                     max_turns=max_turns,
-                    call=call,
+                    call=provider.complete,
                     skills=skills,
                     on_event=print_event,
                     command_timeout=command_timeout,
@@ -219,12 +225,13 @@ def cli(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     context = None if args.no_context else load_context()
     skills = load_skills(args.skills_dir)
+    cfg = ProviderConfig(provider=args.provider, model=args.model, timeout=LLM_TIMEOUT)
     match select_mode(args):
         case "headless":
             asyncio.run(
                 run_headless(
                     prompt=args.headless_prompt,
-                    model=args.model,
+                    cfg=cfg,
                     max_turns=args.max_turns,
                     command_timeout=args.command_timeout,
                     skills=skills,
@@ -234,7 +241,7 @@ def cli(argv: Sequence[str] | None = None) -> None:
         case "plain":
             asyncio.run(
                 run_plain(
-                    model=args.model,
+                    cfg=cfg,
                     max_turns=args.max_turns,
                     command_timeout=args.command_timeout,
                     skills=skills,
