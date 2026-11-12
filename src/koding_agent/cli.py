@@ -12,7 +12,6 @@ import asyncio
 import os
 import sys
 from collections.abc import Sequence
-from functools import partial
 from pathlib import Path
 from typing import Literal
 
@@ -31,7 +30,6 @@ from koding_agent.core import (
     ProviderConfig,
     SkillLibrary,
     build_system_prompt,
-    llm_call,
     load_context,
     load_skills,
     open_provider,
@@ -199,7 +197,7 @@ async def run_plain(
 
 
 async def run_tui(
-    model: str,
+    cfg: ProviderConfig,
     max_turns: int,
     first_prompt: str | None,
     command_timeout: float,
@@ -208,10 +206,10 @@ async def run_tui(
 ) -> None:
     from koding_agent.tui.app import AgentApp  # keeps Textual off the -p path
 
-    async with ollama_client() as client:
+    async with open_provider(cfg) as provider:
         app = AgentApp(
-            partial(llm_call, client, model),
-            model=model,
+            provider.complete,
+            model=cfg.model,
             max_turns=max_turns,
             first_prompt=first_prompt,
             command_timeout=command_timeout,
@@ -256,7 +254,7 @@ def cli(argv: Sequence[str] | None = None) -> None:
                 )
             asyncio.run(
                 run_tui(
-                    model=args.model,
+                    cfg,
                     max_turns=args.max_turns,
                     first_prompt=args.prompt,
                     command_timeout=args.command_timeout,
