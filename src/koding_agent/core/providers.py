@@ -15,7 +15,7 @@ from koding_agent.core.llm import LlmError, Message
 @dataclass
 class ProviderConfig:
     provider: str
-    model: str | None = None
+    model: str
     base_url: str | None = None
     timeout: int | None = None
 
@@ -24,8 +24,10 @@ type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
 
 
 class Provider(Protocol):
-    def complete(self, messages: list[Message]) -> str: ...
-    def aclose(): ...
+    @classmethod
+    def from_config(cls, cfg: ProviderConfig) -> Provider: ...
+    async def complete(self, messages: list[Message]) -> str: ...
+    async def aclose(self): ...
 
 
 # 1) base class
@@ -43,7 +45,9 @@ class _BaseProvider:
             raise LlmError(f"Couldn't instantiate the class: {err}") from err
 
 
-async def post_json(client: AsyncClient, endpoint: str, json: dict):
+async def post_json(
+    client: AsyncClient, endpoint: str, json: dict[str, str | bool | list[Message]]
+):
     try:
         return await client.post(endpoint, json=json)
     except httpx2.HTTPError as e:
@@ -102,7 +106,7 @@ class OllamaProvider:
 
 
 class OpenrouterProvider:
-    _DEFAUlT_BASE_URL: str = "https://eu.openrouter.ai"
+    _DEFAULT_BASE_URL: str = "https://eu.openrouter.ai"
     _DEFAULT_MODEL: str = "qwen3.8:27b-mlx"
     _DEFAULT_TIMEOUT: int = 10
 
@@ -143,7 +147,7 @@ class OpenrouterProvider:
             raise LlmError(f"Unexpected reply from the model: {response.text}") from e
 
     async def aclose(self):
-        self.client.aclose()
+        await self.client.aclose()
 
     @classmethod
     def from_config(cls, cfg: ProviderConfig) -> OpenrouterProvider:
@@ -154,7 +158,7 @@ class OpenrouterProvider:
             raise LlmError(f"Couldn't instantiat the class: {err}") from err
 
 
-_REGISTRY: dict[str, Provider] = {
+_REGISTRY: dict[str, type[Provider]] = {
     "ollama": OllamaProvider,
     "openrouter": OpenrouterProvider,
 }
@@ -180,7 +184,7 @@ async def open_provider(cfg: ProviderConfig):
 
 
 async def main():
-    msgs = [{"role": "user", "content": "Why is the sky blue?"}]
+    msgs: list[Message] = [{"role": "user", "content": "Why is the sky blue?"}]
     cfg = ProviderConfig(provider="ollama", model="qwen3.8:27b-dflash2-nvfp4")
 
     async with open_provider(cfg) as provider:
