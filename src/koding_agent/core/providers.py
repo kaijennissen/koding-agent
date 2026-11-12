@@ -4,18 +4,11 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Protocol, TypedDict, cast
+from typing import Protocol, cast
 
 import httpx2
 from httpx2 import AsyncClient
-from llm import LlmError
-
-DEFAULT_MODEL = "qwen3.8:27b-mlx"
-
-
-class Message(TypedDict):
-    role: str
-    content: str
+from llm import LlmError, Message
 
 
 @dataclass
@@ -30,20 +23,38 @@ type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
 
 
 class Provider(Protocol):
-    def complete(): ...
+    def complete(self,messages:list[Message]) ->str : ...
     def aclose(): ...
 
+# 1) base class
+# 2) pass everything the class knows
+
+class _BaseProvider:
+    """Shared config handling for all providers"""
+
+    @classmethod
+    def from_config(cls,cfg:ProviderConfig)->_BaseProvider:
+        try:
+            return cls()
+        except Exception as err:
+            raise LlmError(f"Couldn't instantiate the class: {err}") from err
 
 class OllamaProvider:
+    _DEFAUlT_BASE_URL: str= "http://localhost:11434",
+    _DEFAULT_MODEL:str = "qwen3.8:27b-mlx"
+    _DEFAULT_TIMEOUT:int=120
+
     def __init__(
         self,
-        base_url: str = "http://localhost:11434",
-        model: str = "qwen3.8:27b-mlx",
-        timeout: int = 120,
+        base_url:str | None,
+        model: str | None ,
+        timeout: int |None,
+        client: AsyncClient | None
     ):
-        self.base_url = base_url
-        self.model = model
-        self.client = AsyncClient(base_url=self.base_url, timeout=timeout)
+        self.base_url = base_url or self._DEFAULT_BASE_URL
+        self.model = model or self._DEFAULT_MODEL
+        self.timeout=timeout or self._DEFAULT_TIMEOUT
+        self.client = client or AsyncClient(base_url=self.base_url, timeout=self.timeout) # makes testing easier
 
     async def complete(self, messages: list[Message]) -> str:
         """Ask Ollama for the next reply; every failure is raised as LlmError."""
@@ -58,7 +69,7 @@ class OllamaProvider:
         if response.is_error:
             try:
                 detail = response.json()["error"]  # Ollama puts its reason here
-            except ValueError, KeyError, TypeError:
+            except (ValueError, KeyError, TypeError):
                 detail = response.text
             raise LlmError(f"Model request failed ({response.status_code}): {detail}")
 
@@ -71,23 +82,29 @@ class OllamaProvider:
         self.client.aclose()
 
     @classmethod
-    def from_config(cls, cfg: ProviderConfig) -> Provider:
+    def from_config(cls, cfg: ProviderConfig) -> OllamaProvider:
         try:
-            return cls(model=cfg.model)
+            return cls(base_url=cfg.base_url,model=cfg.model,timeout=cfg.timeout)
         except Exception as err:
             raise LlmError(f"Couldn't instantiat the class: {err}") from err
 
 
 class OpenrouterProvider:
+    _DEFAUlT_BASE_URL: str= "https://eu.openrouter.ai"
+    _DEFAULT_MODEL:str = "qwen3.8:27b-mlx"
+    _DEFAULT_TIMEOUT:int=10
+
     def __init__(
         self,
-        base_url: str = "https://eu.openrouter.ai",
-        model: str = "qwen3.8:27b-mlx",
-        timeout: int = 120,
+        base_url: str|None  ,
+        model: str |None,
+        timeout: int |None,
+        client:AsyncClient | None
     ):
-        self.base_url = base_url
-        self.model = model
-        self.client = AsyncClient(base_url=self.base_url, timeout=timeout)
+        self.base_url = base_url or self._DEFAULT_BASE_URL
+        self.model = model or self._DEFAULT_MODEL
+        self.timeout=timeout or self._DEFAULT_TIMEOUT
+        self.client = client or AsyncClient(base_url=self.base_url, timeout=self.timeout)
 
     async def complete(self, messages: list[Message]) -> str:
         """Ask OpenRouter for the next reply; every failure is raised as LlmError."""
@@ -102,7 +119,7 @@ class OpenrouterProvider:
         if response.is_error:
             try:
                 detail = response.json()["error"]  # Ollama puts its reason here
-            except ValueError, KeyError, TypeError:
+            except (ValueError, KeyError, TypeError):
                 detail = response.text
             raise LlmError(f"Model request failed ({response.status_code}): {detail}")
 
@@ -115,15 +132,15 @@ class OpenrouterProvider:
         self.client.aclose()
 
     @classmethod
-    def from_config(cls, cfg: ProviderConfig) -> Provider:
+    def from_config(cls, cfg: ProviderConfig) -> OpenrouterProvider:
         # TODO: needs to be fixed in both Providers
         try:
-            return cls(model=cfg.model)
+            return cls(base_url=cfg.base_url,model=cfg.model,timeout=cfg.timeout)
         except Exception as err:
             raise LlmError(f"Couldn't instantiat the class: {err}") from err
 
 
-_REGISTRY: dict[str, Provider] = {"ollama": OllamaProvider}
+_REGISTRY: dict[str, Provider] = {"ollama": OllamaProvider,"openrouter":OpenrouterProvider}
 
 
 @asynccontextmanager
