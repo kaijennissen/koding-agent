@@ -26,25 +26,12 @@ type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
 
 
 class Provider(Protocol):
+    model: str
+
     @classmethod
     def from_config(cls, cfg: ProviderConfig) -> Provider: ...
     async def complete(self, messages: list[Message]) -> str: ...
     async def aclose(self): ...
-
-
-# 1) base class
-# 2) pass everything the class knows
-
-
-class _BaseProvider:
-    """Shared config handling for all providers"""
-
-    @classmethod
-    def from_config(cls, cfg: ProviderConfig) -> _BaseProvider:
-        try:
-            return cls()
-        except Exception as err:
-            raise LlmError(f"Couldn't instantiate the class: {err}") from err
 
 
 async def post_json(
@@ -68,7 +55,9 @@ class OllamaProvider:
         timeout: int | None,
         client: AsyncClient | None = None,
     ):
-        self.base_url = base_url or self._DEFAULT_BASE_URL
+        self.base_url = (
+            base_url or os.environ.get("OLLAMA_HOST") or self._DEFAULT_BASE_URL
+        )
         self.model = model or self._DEFAULT_MODEL
         self.timeout = timeout or self._DEFAULT_TIMEOUT
         self.client = client or AsyncClient(
@@ -103,14 +92,15 @@ class OllamaProvider:
     def from_config(cls, cfg: ProviderConfig) -> OllamaProvider:
         try:
             return cls(base_url=cfg.base_url, model=cfg.model, timeout=cfg.timeout)
+        except LlmError:
+            raise
         except Exception as err:
-            raise LlmError(f"Couldn't instantiat the class: {err}") from err
+            raise LlmError(f"Couldn't set up provider 'ollama': {err}") from err
 
 
 class OpenrouterProvider:
     _DEFAULT_BASE_URL: str = "https://eu.openrouter.ai"
-    _DEFAULT_MODEL: str = "qwen3.8:27b-mlx"
-    _DEFAULT_TIMEOUT: int = 10
+    _DEFAULT_TIMEOUT: int = 120  # replies are not streamed
     _API_KEY_ENV_VAR: str = "OPENROUTER_API_KEY"
 
     def __init__(
@@ -123,28 +113,32 @@ class OpenrouterProvider:
     ):
         self.api_key_env_var = api_key_env_var or self._API_KEY_ENV_VAR
         self.base_url = base_url or self._DEFAULT_BASE_URL
-        self.model = model or self._DEFAULT_MODEL
+        if not model:
+            raise LlmError("openrouter has no default model; pass --model")
+        self.model = model
         self.timeout = timeout or self._DEFAULT_TIMEOUT
-        token = os.getenv(self.api_key_env_var)
-        self.client = client or AsyncClient(
-            base_url=self.base_url,
-            timeout=self.timeout,
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        if client is None:
+            token = os.getenv(self.api_key_env_var)
+            if not token:
+                raise LlmError(f"${self.api_key_env_var} is not set")
+            client = AsyncClient(
+                base_url=self.base_url,
+                timeout=self.timeout,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        self.client = client
 
     async def complete(self, messages: list[Message]) -> str:
         """Ask OpenRouter for the next reply; every failure is raised as LlmError."""
-        try:
-            response = await self.client.post(
-                "/api/v1/chat/completions",
-                json={"model": self.model, "stream": False, "messages": messages},
-            )
-        except httpx2.HTTPError as e:
-            raise LlmError(f"Could not reach the model: {e}") from e
+        response = await post_json(
+            client=self.client,
+            endpoint="/api/v1/chat/completions",
+            json={"model": self.model, "stream": False, "messages": messages},
+        )
 
         if response.is_error:
             try:
-                detail = response.json()["error"]  # Ollama puts its reason here
+                detail = response.json()["error"]  # the API puts its reason here
             except ValueError, KeyError, TypeError:
                 detail = response.text
             raise LlmError(f"Model request failed ({response.status_code}): {detail}")
@@ -159,7 +153,6 @@ class OpenrouterProvider:
 
     @classmethod
     def from_config(cls, cfg: ProviderConfig) -> OpenrouterProvider:
-        # TODO: needs to be fixed in both Providers
         try:
             return cls(
                 base_url=cfg.base_url,
@@ -167,14 +160,20 @@ class OpenrouterProvider:
                 timeout=cfg.timeout,
                 api_key_env_var=cfg.api_key_env_var,
             )
+        except LlmError:
+            raise
         except Exception as err:
-            raise LlmError(f"Couldn't instantiat the class: {err}") from err
+            raise LlmError(f"Couldn't set up provider 'openrouter': {err}") from err
 
 
 _REGISTRY: dict[str, type[Provider]] = {
     "ollama": OllamaProvider,
     "openrouter": OpenrouterProvider,
 }
+
+
+def provider_names() -> list[str]:
+    return sorted(_REGISTRY)
 
 
 @asynccontextmanager

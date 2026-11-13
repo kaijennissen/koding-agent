@@ -4,13 +4,11 @@ import pytest
 
 from koding_agent import cli
 from koding_agent.cli import (
-    DEFAULT_OLLAMA_URL,
     Mode,
-    ollama_url,
     parse_args,
     select_mode,
 )
-from koding_agent.core import DEFAULT_COMMAND_TIMEOUT, DEFAULT_MODEL
+from koding_agent.core import DEFAULT_COMMAND_TIMEOUT
 
 
 @pytest.mark.parametrize(
@@ -61,31 +59,43 @@ def test_command_timeout_flag(argv: list[str], expected: float) -> None:
 @pytest.mark.parametrize(
     "argv,expected",
     [
-        pytest.param([], DEFAULT_MODEL, id="default"),
+        pytest.param([], None, id="default"),
         pytest.param(["--model", "llama3"], "llama3", id="--model"),
         pytest.param(["-m", "llama3"], "llama3", id="-m"),
     ],
 )
-def test_model_flag(argv: list[str], expected: str) -> None:
+def test_model_flag(argv: list[str], expected: str | None) -> None:
     assert parse_args(argv).model == expected
 
 
-@pytest.mark.parametrize(
-    "env,expected",
-    [
-        pytest.param(None, DEFAULT_OLLAMA_URL, id="unset"),
-        pytest.param("", DEFAULT_OLLAMA_URL, id="empty"),
-        pytest.param("http://localhost:11434", "http://localhost:11434", id="set"),
-    ],
-)
-def test_ollama_url_reads_ollama_host(
-    monkeypatch: pytest.MonkeyPatch, env: str | None, expected: str
-) -> None:
-    if env is None:
-        monkeypatch.delenv("OLLAMA_HOST", raising=False)
-    else:
-        monkeypatch.setenv("OLLAMA_HOST", env)
-    assert ollama_url() == expected
+def test_provider_flags_default_to_none() -> None:
+    """Unset flags stay None so the provider's own defaults apply."""
+    args = parse_args([])
+    assert (args.provider, args.base_url, args.api_key_env, args.timeout) == (
+        "ollama",
+        None,
+        None,
+        None,
+    )
+
+
+def test_provider_flags() -> None:
+    args = parse_args(
+        ["--provider", "openrouter", "--base-url", "http://x", "--api-key-env", "K"]
+        + ["--timeout", "5"]
+    )
+    assert (args.provider, args.base_url, args.api_key_env, args.timeout) == (
+        "openrouter",
+        "http://x",
+        "K",
+        5,
+    )
+
+
+def test_unknown_provider_is_rejected() -> None:
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--provider", "nope"])
+    assert exc.value.code == 2
 
 
 def test_tui_without_a_terminal_exits_with_a_hint(
@@ -102,3 +112,11 @@ def test_tui_without_a_terminal_exits_with_a_hint(
 )
 def test_no_context_flag(argv: list[str], expected: bool) -> None:
     assert parse_args(argv).no_context is expected
+
+
+def test_provider_setup_error_exits_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing model for openrouter is reported, not shown as a traceback."""
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    with pytest.raises(SystemExit) as exc:
+        cli.cli(["-p", "x", "--provider", "openrouter"])
+    assert "--model" in str(exc.value.code)

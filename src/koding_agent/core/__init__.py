@@ -21,7 +21,7 @@ from koding_agent.core.loop import run_agent
 from koding_agent.core.prompts import build_system_prompt
 
 # from koding_agent.core.providers import call_openrouter as llm_call
-from koding_agent.core.providers import ProviderConfig, open_provider
+from koding_agent.core.providers import ProviderConfig, open_provider, provider_names
 from koding_agent.core.tools import ToolCall, ToolResult
 from koding_agent.core.tools.bash import BashCall, BashResult
 from koding_agent.core.tools.skills import (
@@ -34,6 +34,7 @@ from koding_agent.core.tools.skills import (
 
 __all__ = [
     "open_provider",
+    "provider_names",
     "ProviderConfig",
     "DEFAULT_COMMAND_TIMEOUT",
     "DEFAULT_MAX_TURNS",

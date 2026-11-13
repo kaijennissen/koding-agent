@@ -21,6 +21,8 @@ RUN uv sync --locked --no-dev --no-editable
 RUN groupadd --gid 1000 agent && \
     useradd --uid 1000 --gid agent --no-create-home --home-dir /tmp --shell /bin/bash agent
 ENV HOME=/tmp
+# The host as seen from the container (see README "Run the agent").
+ENV OLLAMA_HOST=http://host.docker.internal:11434
 USER agent
 
 # Model-written commands start in the host-provided clone, not in the
