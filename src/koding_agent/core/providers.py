@@ -1,6 +1,7 @@
 """Message and call types, and the Ollama client."""
 
 import asyncio
+import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -109,6 +110,7 @@ class OpenrouterProvider:
     _DEFAULT_BASE_URL: str = "https://eu.openrouter.ai"
     _DEFAULT_MODEL: str = "qwen3.8:27b-mlx"
     _DEFAULT_TIMEOUT: int = 10
+    _API_KEY_ENV_VAR: str = "OPENROUTER_API_KEY"
 
     def __init__(
         self,
@@ -117,11 +119,14 @@ class OpenrouterProvider:
         timeout: int | None,
         client: AsyncClient | None = None,
     ):
+        token = os.getenv(self._API_KEY_ENV_VAR)
         self.base_url = base_url or self._DEFAULT_BASE_URL
         self.model = model or self._DEFAULT_MODEL
         self.timeout = timeout or self._DEFAULT_TIMEOUT
         self.client = client or AsyncClient(
-            base_url=self.base_url, timeout=self.timeout
+            base_url=self.base_url,
+            timeout=self.timeout,
+            headers={"Authorization": f"Bearer {token}"},
         )
 
     async def complete(self, messages: list[Message]) -> str:
