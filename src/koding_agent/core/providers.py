@@ -19,6 +19,7 @@ class ProviderConfig:
     model: str
     base_url: str | None = None
     timeout: int | None = None
+    api_key_env_var: str | None = None
 
 
 type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
@@ -117,12 +118,14 @@ class OpenrouterProvider:
         base_url: str | None,
         model: str | None,
         timeout: int | None,
+        api_key_env_var: str | None,
         client: AsyncClient | None = None,
     ):
-        token = os.getenv(self._API_KEY_ENV_VAR)
+        self.api_key_env_var = api_key_env_var or self._API_KEY_ENV_VAR
         self.base_url = base_url or self._DEFAULT_BASE_URL
         self.model = model or self._DEFAULT_MODEL
         self.timeout = timeout or self._DEFAULT_TIMEOUT
+        token = os.getenv(self.api_key_env_var)
         self.client = client or AsyncClient(
             base_url=self.base_url,
             timeout=self.timeout,
@@ -158,7 +161,12 @@ class OpenrouterProvider:
     def from_config(cls, cfg: ProviderConfig) -> OpenrouterProvider:
         # TODO: needs to be fixed in both Providers
         try:
-            return cls(base_url=cfg.base_url, model=cfg.model, timeout=cfg.timeout)
+            return cls(
+                base_url=cfg.base_url,
+                model=cfg.model,
+                timeout=cfg.timeout,
+                api_key_env_var=cfg.api_key_env_var,
+            )
         except Exception as err:
             raise LlmError(f"Couldn't instantiat the class: {err}") from err
 
