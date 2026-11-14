@@ -5,10 +5,10 @@ import os
 from collections.abc import Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import httpx2
-from httpx2 import AsyncClient
+from httpx2 import AsyncClient, Response
 
 from koding_agent.core.llm import LlmError, Message
 
@@ -41,6 +41,42 @@ async def post_json(
         return await client.post(endpoint, json=json)
     except httpx2.HTTPError as e:
         raise LlmError(f"Could not reach the model: {e}") from e
+
+
+def _error_detail(response: Response) -> str:
+    """The provider's reason for a failed request, else the raw body text."""
+    try:
+        error: Any = response.json()["error"]
+    except (ValueError, KeyError, TypeError):
+        return response.text
+    if isinstance(error, str):
+        return error
+    if isinstance(error, dict):
+        message: Any = cast(dict[str, Any], error).get("message")
+        if isinstance(message, str):
+            return message
+    return response.text
+
+
+def raise_for_error(response: Response) -> None:
+    """Raise LlmError for an HTTP error status; do nothing otherwise."""
+    if response.is_error:
+        raise LlmError(
+            f"Model request failed ({response.status_code}): {_error_detail(response)}"
+        )
+
+
+def reply_text(response: Response, *path: str | int) -> str:
+    """Decode the body, follow `path` into it and return the reply text."""
+    try:
+        data: Any = response.json()
+        for key in path:
+            data = data[key]
+    except (ValueError, KeyError, IndexError, TypeError) as e:
+        raise LlmError(f"Unexpected reply from the model: {response.text}") from e
+    if not isinstance(data, str):
+        raise LlmError(f"Unexpected reply from the model: {response.text}")
+    return data
 
 
 class OllamaProvider:
