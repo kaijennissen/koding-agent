@@ -276,3 +276,74 @@ def test_reply_text_chains_the_cause(
         providers.reply_text(response, *PATH_OPENROUTER)
 
     assert isinstance(info.value.__cause__, cause)
+
+
+# --- wiring: each provider runs post -> check -> extract with its own values -----
+
+type AnyProvider = OllamaProvider | OpenrouterProvider
+type MakeProvider = Callable[[AsyncClient], AnyProvider]
+
+OLLAMA_REPLY: dict[str, object] = {"message": {"content": "hello"}}
+OPENROUTER_REPLY: dict[str, object] = {
+    "choices": [{"message": {"content": "hello"}}]
+}
+
+
+def make_ollama(client: AsyncClient) -> AnyProvider:
+    return OllamaProvider(None, "m", None, client=client)
+
+
+def make_openrouter(client: AsyncClient) -> AnyProvider:
+    return OpenrouterProvider(None, "v/m", None, None, client=client)
+
+
+@pytest.mark.parametrize(
+    ("make", "endpoint", "reply_body"),
+    [
+        (make_ollama, "/api/chat", OLLAMA_REPLY),
+        (make_openrouter, "/api/v1/chat/completions", OPENROUTER_REPLY),
+    ],
+    ids=["ollama", "openrouter"],
+)
+async def test_complete_uses_its_endpoint_and_reply_path(
+    make: MakeProvider, endpoint: str, reply_body: dict[str, object]
+) -> None:
+    client, seen = recording_client(Response(200, json=reply_body))
+    async with client:
+        reply = await make(client).complete(MESSAGES)
+
+    assert seen[0].url.path == endpoint
+    assert reply == "hello"
+
+
+@pytest.mark.parametrize(
+    ("make", "reply_body"),
+    [(make_ollama, OLLAMA_REPLY), (make_openrouter, OPENROUTER_REPLY)],
+    ids=["ollama", "openrouter"],
+)
+async def test_complete_sends_the_resolved_model_and_history(
+    make: MakeProvider, reply_body: dict[str, object]
+) -> None:
+    client, seen = recording_client(Response(200, json=reply_body))
+    async with client:
+        provider = make(client)
+        await provider.complete(MESSAGES)
+
+    assert json.loads(seen[0].content) == {
+        "model": provider.model,
+        "stream": False,
+        "messages": MESSAGES,
+    }
+
+
+@pytest.mark.parametrize(
+    "make", [make_ollama, make_openrouter], ids=["ollama", "openrouter"]
+)
+async def test_complete_checks_the_status_first(make: MakeProvider) -> None:
+    """A 401 must say 'request failed', not 'unexpected reply'."""
+    client, _ = recording_client(Response(401, json={"error": {"message": "bad key"}}))
+    async with client:
+        with pytest.raises(LlmError) as info:
+            await make(client).complete(MESSAGES)
+
+    assert str(info.value) == "Model request failed (401): bad key"

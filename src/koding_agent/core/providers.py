@@ -109,17 +109,8 @@ class OllamaProvider:
             json={"model": self.model, "stream": False, "messages": messages},
         )
 
-        if response.is_error:
-            try:
-                detail = response.json()["error"]  # Ollama puts its reason here
-            except ValueError, KeyError, TypeError:
-                detail = response.text
-            raise LlmError(f"Model request failed ({response.status_code}): {detail}")
-
-        try:
-            return cast(str, response.json()["message"]["content"])
-        except (ValueError, KeyError, TypeError) as e:
-            raise LlmError(f"Unexpected reply from the model: {response.text}") from e
+        raise_for_error(response)
+        return reply_text(response, "message", "content")
 
     async def aclose(self):
         await self.client.aclose()
@@ -172,17 +163,8 @@ class OpenrouterProvider:
             json={"model": self.model, "stream": False, "messages": messages},
         )
 
-        if response.is_error:
-            try:
-                detail = response.json()["error"]  # the API puts its reason here
-            except ValueError, KeyError, TypeError:
-                detail = response.text
-            raise LlmError(f"Model request failed ({response.status_code}): {detail}")
-
-        try:
-            return cast(str, response.json()["choices"][0]["message"]["content"])
-        except (ValueError, KeyError, TypeError) as e:
-            raise LlmError(f"Unexpected reply from the model: {response.text}") from e
+        raise_for_error(response)
+        return reply_text(response, "choices", 0, "message", "content")
 
     async def aclose(self):
         await self.client.aclose()
