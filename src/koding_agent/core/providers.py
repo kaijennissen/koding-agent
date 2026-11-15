@@ -123,6 +123,14 @@ class HttpProvider(ABC):
     def from_config(cls, cfg: ProviderConfig) -> Self:
         """Build a provider from the user's config; raise LlmError if unusable."""
 
+    @classmethod
+    def _model(cls, cfg: ProviderConfig) -> str:
+        """The model to use: the user's, else the default; LlmError if neither."""
+        model = cfg.model or cls.DEFAULT_MODEL
+        if not model:
+            raise LlmError(f"{cls.__name__} has no default model; pass --model")
+        return model
+
     async def complete(self, messages: list[Message]) -> str:
         """Ask the model for the next reply; every failure is raised as LlmError."""
         response = await post_json(
@@ -150,7 +158,7 @@ class OllamaProvider(HttpProvider):
             base_url=cfg.base_url
             or os.environ.get(cls.BASE_URL_ENV)
             or cls.DEFAULT_BASE_URL,
-            model=cfg.model or cls.DEFAULT_MODEL,
+            model=cls._model(cfg),
             timeout=DEFAULT_TIMEOUT if cfg.timeout is None else cfg.timeout,
         )
 
@@ -163,14 +171,13 @@ class OpenrouterProvider(HttpProvider):
 
     @classmethod
     def from_config(cls, cfg: ProviderConfig) -> Self:
-        if not cfg.model:
-            raise LlmError("openrouter has no default model; pass --model")
+        model = cls._model(cfg)
         key_var = cfg.api_key_env_var or cls.API_KEY_ENV
         if not (token := os.getenv(key_var)):
             raise LlmError(f"${key_var} is not set")
         return cls(
             base_url=cfg.base_url or cls.DEFAULT_BASE_URL,
-            model=cfg.model,
+            model=model,
             timeout=DEFAULT_TIMEOUT if cfg.timeout is None else cfg.timeout,
             headers={"Authorization": f"Bearer {token}"},
         )
