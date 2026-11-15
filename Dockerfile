@@ -1,13 +1,17 @@
-FROM python:3.14.4-slim-bookworm
+FROM python:3.14.10-slim-bookworm
 
 RUN apt-get update -y && \
-apt-get install -y curl jq vim
+apt-get install -y \
+	curl \
+	jq \
+	vim \
+	git
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.21 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.13.8 /uv /usr/local/bin/uv
 
 ENV UV_PROJECT_ENVIRONMENT=/opt/app
 WORKDIR /app
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml uv.lock .agents ./
 
 RUN uv sync --locked --no-dev --no-install-project
 
