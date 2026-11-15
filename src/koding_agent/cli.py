@@ -68,8 +68,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "-m",
         "--model",
-        help="model to use (default: the provider's own; "
-        "required for openrouter)",
+        help="model to use (default: the provider's own; required for openrouter)",
     )
     parser.add_argument(
         "-t", "--max-turns", default=DEFAULT_MAX_TURNS, type=int, help="max turns"

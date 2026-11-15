@@ -305,15 +305,11 @@ type AnyProvider = OllamaProvider | OpenrouterProvider
 type MakeProvider = Callable[[AsyncClient], AnyProvider]
 
 OLLAMA_REPLY: dict[str, object] = {"message": {"content": "hello"}}
-OPENROUTER_REPLY: dict[str, object] = {
-    "choices": [{"message": {"content": "hello"}}]
-}
+OPENROUTER_REPLY: dict[str, object] = {"choices": [{"message": {"content": "hello"}}]}
 
 
 def make_ollama(client: AsyncClient) -> AnyProvider:
-    return OllamaProvider(
-        base_url="http://x", model="m", timeout=1, client=client
-    )
+    return OllamaProvider(base_url="http://x", model="m", timeout=1, client=client)
 
 
 def make_openrouter(client: AsyncClient) -> AnyProvider:
@@ -385,9 +381,7 @@ def test_openrouter_has_no_default_model() -> None:
     assert OpenrouterProvider.DEFAULT_MODEL is None
 
 
-@pytest.mark.parametrize(
-    "missing", ["_ENDPOINT", "_REPLY_PATH", "DEFAULT_BASE_URL"]
-)
+@pytest.mark.parametrize("missing", ["_ENDPOINT", "_REPLY_PATH", "DEFAULT_BASE_URL"])
 def test_a_provider_must_define_its_class_variables(missing: str) -> None:
     attrs: dict[str, object] = {
         "_ENDPOINT": "/e",

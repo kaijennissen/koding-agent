@@ -1,10 +1,10 @@
 """Model providers: config, the shared HTTP skeleton, and the registry."""
 
 import os
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Protocol, Self, cast
 
 import httpx2
@@ -37,8 +37,7 @@ DEFAULT_TIMEOUT = 120  # seconds; replies are not streamed
 
 
 async def post_json(
-    *,
-    client: AsyncClient, endpoint: str, json: dict[str, str | bool | list[Message]]
+    *, client: AsyncClient, endpoint: str, json: dict[str, str | bool | list[Message]]
 ) -> Response:
     try:
         return await client.post(endpoint, json=json)
@@ -50,7 +49,7 @@ def _error_detail(response: Response) -> str:
     """The provider's reason for a failed request, else the raw body text."""
     try:
         error: Any = response.json()["error"]
-    except (ValueError, KeyError, TypeError):
+    except ValueError, KeyError, TypeError:
         return response.text
     if isinstance(error, str):
         return error
