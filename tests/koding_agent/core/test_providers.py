@@ -14,38 +14,54 @@ from koding_agent.core import (
     open_provider,
     providers,
 )
-from koding_agent.core.providers import OllamaProvider, OpenrouterProvider
+from koding_agent.core.providers import (
+    HttpProvider,
+    OllamaProvider,
+    OpenrouterProvider,
+)
+
+
+def ollama(base_url: str | None) -> OllamaProvider:
+    return OllamaProvider.from_config(
+        ProviderConfig(provider="ollama", model=None, base_url=base_url)
+    )
+
+
+def openrouter(*, model: str | None, key_var: str | None = None) -> OpenrouterProvider:
+    return OpenrouterProvider.from_config(
+        ProviderConfig(provider="openrouter", model=model, api_key_env_var=key_var)
+    )
 
 
 def test_ollama_base_url_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OLLAMA_HOST", raising=False)
-    assert OllamaProvider(None, None, None).base_url == "http://localhost:11434"
-    monkeypatch.setenv("OLLAMA_HOST", "http://env:1")
-    assert OllamaProvider(None, None, None).base_url == "http://env:1"
-    assert OllamaProvider("http://flag:2", None, None).base_url == "http://flag:2"
+    monkeypatch.delenv(OllamaProvider.BASE_URL_ENV, raising=False)
+    assert ollama(None).base_url == OllamaProvider.DEFAULT_BASE_URL
+    monkeypatch.setenv(OllamaProvider.BASE_URL_ENV, "http://env:1")
+    assert ollama(None).base_url == "http://env:1"
+    assert ollama("http://flag:2").base_url == "http://flag:2"
 
 
 def test_ollama_has_a_default_model() -> None:
-    assert OllamaProvider(None, None, None).model
+    assert ollama(None).model
 
 
 def test_openrouter_requires_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv(OpenrouterProvider.API_KEY_ENV, "k")
     with pytest.raises(LlmError, match="--model"):
-        OpenrouterProvider(None, None, None, None)
+        openrouter(model=None)
 
 
 def test_openrouter_requires_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    with pytest.raises(LlmError, match="OPENROUTER_API_KEY"):
-        OpenrouterProvider(None, "vendor/model", None, None)
+    monkeypatch.delenv(OpenrouterProvider.API_KEY_ENV, raising=False)
+    with pytest.raises(LlmError, match=OpenrouterProvider.API_KEY_ENV):
+        openrouter(model="vendor/model")
 
 
 def test_openrouter_reads_a_custom_key_variable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("MY_KEY", "secret")
-    provider = OpenrouterProvider(None, "vendor/model", None, "MY_KEY")
+    provider = openrouter(model="vendor/model", key_var="MY_KEY")
     assert provider.client.headers["Authorization"] == "Bearer secret"
 
 
@@ -55,7 +71,7 @@ async def test_open_provider_rejects_unknown_names() -> None:
             pass
 
 
-def test_unexpected_setup_errors_become_llm_errors(
+async def test_unexpected_setup_errors_become_llm_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def boom(*_: object, **__: object) -> None:
@@ -63,7 +79,8 @@ def test_unexpected_setup_errors_become_llm_errors(
 
     monkeypatch.setattr(OllamaProvider, "__init__", boom)
     with pytest.raises(LlmError, match="bad url"):
-        OllamaProvider.from_config(ProviderConfig(provider="ollama", model="m"))
+        async with open_provider(ProviderConfig(provider="ollama", model="m")):
+            pass
 
 
 # --- post_json: transport only, never interprets the response --------------------
@@ -92,7 +109,9 @@ def recording_client(reply: Response) -> tuple[AsyncClient, list[httpx2.Request]
 async def test_post_json_posts_to_the_endpoint() -> None:
     client, seen = recording_client(Response(200, json={}))
     async with client:
-        await providers.post_json(client, "/api/chat", {"model": "m"})
+        await providers.post_json(
+            client=client, endpoint="/api/chat", json={"model": "m"}
+        )
 
     assert seen[0].method == "POST"
     assert seen[0].url.path == "/api/chat"
@@ -102,7 +121,7 @@ async def test_post_json_sends_the_payload_as_the_json_body() -> None:
     payload = {"model": "m", "stream": False, "messages": MESSAGES}
     client, seen = recording_client(Response(200, json={}))
     async with client:
-        await providers.post_json(client, "/api/chat", payload)
+        await providers.post_json(client=client, endpoint="/api/chat", json=payload)
 
     assert json.loads(seen[0].content) == payload
 
@@ -111,7 +130,9 @@ async def test_post_json_sends_the_payload_as_the_json_body() -> None:
 async def test_post_json_returns_the_response_untouched(status: int) -> None:
     client, _ = recording_client(Response(status, json={"a": 1}))
     async with client:
-        result = await providers.post_json(client, "/e", {"model": "m"})
+        result = await providers.post_json(
+            client=client, endpoint="/e", json={"model": "m"}
+        )
 
     assert isinstance(result, httpx2.Response)
     assert result.status_code == status
@@ -133,7 +154,7 @@ async def test_post_json_wraps_transport_errors(exc: httpx2.HTTPError) -> None:
 
     async with fake_client(handler) as client:
         with pytest.raises(LlmError, match="Could not reach the model") as info:
-            await providers.post_json(client, "/e", {"model": "m"})
+            await providers.post_json(client=client, endpoint="/e", json={"model": "m"})
 
     assert info.value.__cause__ is exc
 
@@ -144,7 +165,7 @@ async def test_post_json_does_not_swallow_unrelated_errors() -> None:
 
     async with fake_client(handler) as client:
         with pytest.raises(RuntimeError, match="bug"):
-            await providers.post_json(client, "/e", {"model": "m"})
+            await providers.post_json(client=client, endpoint="/e", json={"model": "m"})
 
 
 # --- raise_for_error: the error path ---------------------------------------------
@@ -290,11 +311,15 @@ OPENROUTER_REPLY: dict[str, object] = {
 
 
 def make_ollama(client: AsyncClient) -> AnyProvider:
-    return OllamaProvider(None, "m", None, client=client)
+    return OllamaProvider(
+        base_url="http://x", model="m", timeout=1, client=client
+    )
 
 
 def make_openrouter(client: AsyncClient) -> AnyProvider:
-    return OpenrouterProvider(None, "v/m", None, None, client=client)
+    return OpenrouterProvider(
+        base_url="http://x", model="v/m", timeout=1, client=client
+    )
 
 
 @pytest.mark.parametrize(
@@ -347,3 +372,43 @@ async def test_complete_checks_the_status_first(make: MakeProvider) -> None:
             await make(client).complete(MESSAGES)
 
     assert str(info.value) == "Model request failed (401): bad key"
+
+
+# --- class variables and the subclass check --------------------------------------
+
+
+def test_ollama_default_model_is_a_class_variable() -> None:
+    assert ollama(None).model == OllamaProvider.DEFAULT_MODEL
+
+
+def test_openrouter_has_no_default_model() -> None:
+    assert OpenrouterProvider.DEFAULT_MODEL is None
+
+
+@pytest.mark.parametrize(
+    "missing", ["_ENDPOINT", "_REPLY_PATH", "DEFAULT_BASE_URL"]
+)
+def test_a_provider_must_define_its_class_variables(missing: str) -> None:
+    attrs: dict[str, object] = {
+        "_ENDPOINT": "/e",
+        "_REPLY_PATH": ("a",),
+        "DEFAULT_BASE_URL": "http://x",
+        "from_config": classmethod(lambda cls, cfg: cls()),  # pyright: ignore
+    }
+    del attrs[missing]
+
+    with pytest.raises(TypeError, match=missing):
+        type("Broken", (HttpProvider,), attrs)
+
+
+def test_an_abstract_intermediate_base_is_not_checked() -> None:
+    type("Layer", (HttpProvider,), {})  # still abstract: no from_config
+
+
+def test_openrouter_base_url_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(OpenrouterProvider.API_KEY_ENV, "k")
+    default = openrouter(model="v/m")
+    assert default.base_url == OpenrouterProvider.DEFAULT_BASE_URL
+
+    cfg = ProviderConfig(provider="openrouter", model="v/m", base_url="http://flag:3")
+    assert OpenrouterProvider.from_config(cfg).base_url == "http://flag:3"
