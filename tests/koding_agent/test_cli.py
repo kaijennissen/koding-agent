@@ -120,3 +120,9 @@ def test_provider_setup_error_exits_cleanly(monkeypatch: pytest.MonkeyPatch) -> 
     with pytest.raises(SystemExit) as exc:
         cli.cli(["-p", "x", "--provider", "openrouter"])
     assert "--model" in str(exc.value.code)
+
+
+@pytest.mark.parametrize("value", ["0", "-1"])
+def test_timeout_must_be_positive(value: str) -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--timeout", value])

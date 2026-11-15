@@ -36,6 +36,14 @@ from koding_agent.core import (
 type Mode = Literal["headless", "plain", "tui"]
 
 
+def positive_int(value: str) -> int:
+    """argparse type: an int greater than zero."""
+    n = int(value)
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f"must be > 0, got {n}")
+    return n
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         "koding-agent",
@@ -93,7 +101,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--base-url",
         metavar="URL",
-        help="provider endpoint (default: the provider's own; ollama: $OLLAMA_HOST)",
+        help="provider endpoint, a full URL "
+        "(default: the provider's own; ollama: $OLLAMA_HOST)",
     )
     parser.add_argument(
         "--api-key-env",
@@ -103,7 +112,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--timeout",
-        type=int,
+        type=positive_int,
         metavar="SECONDS",
         help="seconds per model request (default: the provider's own, 120)",
     )

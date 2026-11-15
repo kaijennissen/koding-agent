@@ -1,174 +1,184 @@
-"""Message and call types, and the Ollama client."""
+"""Model providers: config, the shared HTTP skeleton, and the registry."""
 
-import asyncio
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Protocol, cast
+from abc import ABC, abstractmethod
+from typing import Any, ClassVar, Protocol, Self, cast
 
 import httpx2
-from httpx2 import AsyncClient
+from httpx2 import AsyncClient, Response
 
 from koding_agent.core.llm import LlmError, Message
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ProviderConfig:
     provider: str
-    model: str
+    model: str | None
     base_url: str | None = None
     timeout: int | None = None
     api_key_env_var: str | None = None
 
 
-type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
-
-
 class Provider(Protocol):
+    """What consumers (the agent loop, front ends) need from a provider."""
+
     model: str
 
-    @classmethod
-    def from_config(cls, cfg: ProviderConfig) -> Provider: ...
     async def complete(self, messages: list[Message]) -> str: ...
-    async def aclose(self): ...
+    async def aclose(self) -> None: ...
+
+
+type ProviderFactory = Callable[[ProviderConfig], Provider]
+
+DEFAULT_TIMEOUT = 120  # seconds; replies are not streamed
 
 
 async def post_json(
+    *,
     client: AsyncClient, endpoint: str, json: dict[str, str | bool | list[Message]]
-):
+) -> Response:
     try:
         return await client.post(endpoint, json=json)
     except httpx2.HTTPError as e:
         raise LlmError(f"Could not reach the model: {e}") from e
 
 
-class OllamaProvider:
-    _DEFAULT_BASE_URL: str = "http://localhost:11434"
-    _DEFAULT_MODEL: str = "qwen3.8:27b-mlx"
-    _DEFAULT_TIMEOUT: int = 120
+def _error_detail(response: Response) -> str:
+    """The provider's reason for a failed request, else the raw body text."""
+    try:
+        error: Any = response.json()["error"]
+    except (ValueError, KeyError, TypeError):
+        return response.text
+    if isinstance(error, str):
+        return error
+    if isinstance(error, dict):
+        message: Any = cast(dict[str, Any], error).get("message")
+        if isinstance(message, str):
+            return message
+    return response.text
+
+
+def raise_for_error(response: Response) -> None:
+    """Raise LlmError for an HTTP error status; do nothing otherwise."""
+    if response.is_error:
+        raise LlmError(
+            f"Model request failed ({response.status_code}): {_error_detail(response)}"
+        )
+
+
+def reply_text(response: Response, *path: str | int) -> str:
+    """Decode the body, follow `path` into it and return the reply text."""
+    try:
+        data: Any = response.json()
+        for key in path:
+            data = data[key]
+    except (ValueError, KeyError, IndexError, TypeError) as e:
+        raise LlmError(f"Unexpected reply from the model: {response.text}") from e
+    if not isinstance(data, str):
+        raise LlmError(f"Unexpected reply from the model: {response.text}")
+    return data
+
+
+class HttpProvider(ABC):
+    """Shared skeleton of providers that POST JSON and read one reply text.
+
+    A subclass sets `_ENDPOINT` and `_REPLY_PATH` and implements `from_config`,
+    which resolves defaults, environment and credentials into explicit values.
+    """
+
+    _ENDPOINT: ClassVar[str]
+    _REPLY_PATH: ClassVar[tuple[str | int, ...]]
+    DEFAULT_BASE_URL: ClassVar[str]
+    DEFAULT_MODEL: ClassVar[str | None] = None  # None: the user must pass a model
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if getattr(cls.from_config, "__isabstractmethod__", False):
+            return  # an intermediate base: its concrete subclasses are checked
+        for name in ("_ENDPOINT", "_REPLY_PATH", "DEFAULT_BASE_URL"):
+            if not hasattr(cls, name):
+                raise TypeError(f"{cls.__name__} must define {name}")
 
     def __init__(
         self,
-        base_url: str | None,
-        model: str | None,
-        timeout: int | None,
-        client: AsyncClient | None = None,
+        *,
+        base_url: str,
+        model: str,
+        timeout: int,
+        headers: dict[str, str] | None = None,
+        client: AsyncClient | None = None,  # injectable, makes testing easier
     ):
-        self.base_url = (
-            base_url or os.environ.get("OLLAMA_HOST") or self._DEFAULT_BASE_URL
-        )
-        self.model = model or self._DEFAULT_MODEL
-        self.timeout = timeout or self._DEFAULT_TIMEOUT
-        self.client = client or AsyncClient(
-            base_url=self.base_url, timeout=self.timeout
-        )  # makes testing easier
-
-    async def complete(self, messages: list[Message]) -> str:
-        """Ask Ollama for the next reply; every failure is raised as LlmError."""
-
-        response = await post_json(
-            client=self.client,
-            endpoint="/api/chat",
-            json={"model": self.model, "stream": False, "messages": messages},
-        )
-
-        if response.is_error:
-            try:
-                detail = response.json()["error"]  # Ollama puts its reason here
-            except ValueError, KeyError, TypeError:
-                detail = response.text
-            raise LlmError(f"Model request failed ({response.status_code}): {detail}")
-
-        try:
-            return cast(str, response.json()["message"]["content"])
-        except (ValueError, KeyError, TypeError) as e:
-            raise LlmError(f"Unexpected reply from the model: {response.text}") from e
-
-    async def aclose(self):
-        await self.client.aclose()
-
-    @classmethod
-    def from_config(cls, cfg: ProviderConfig) -> OllamaProvider:
-        try:
-            return cls(base_url=cfg.base_url, model=cfg.model, timeout=cfg.timeout)
-        except LlmError:
-            raise
-        except Exception as err:
-            raise LlmError(f"Couldn't set up provider 'ollama': {err}") from err
-
-
-class OpenrouterProvider:
-    _DEFAULT_BASE_URL: str = "https://eu.openrouter.ai"
-    _DEFAULT_TIMEOUT: int = 120  # replies are not streamed
-    _API_KEY_ENV_VAR: str = "OPENROUTER_API_KEY"
-
-    def __init__(
-        self,
-        base_url: str | None,
-        model: str | None,
-        timeout: int | None,
-        api_key_env_var: str | None,
-        client: AsyncClient | None = None,
-    ):
-        self.api_key_env_var = api_key_env_var or self._API_KEY_ENV_VAR
-        self.base_url = base_url or self._DEFAULT_BASE_URL
-        if not model:
-            raise LlmError("openrouter has no default model; pass --model")
+        self.base_url = base_url
         self.model = model
-        self.timeout = timeout or self._DEFAULT_TIMEOUT
-        if client is None:
-            token = os.getenv(self.api_key_env_var)
-            if not token:
-                raise LlmError(f"${self.api_key_env_var} is not set")
-            client = AsyncClient(
-                base_url=self.base_url,
-                timeout=self.timeout,
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        self.client = client
-
-    async def complete(self, messages: list[Message]) -> str:
-        """Ask OpenRouter for the next reply; every failure is raised as LlmError."""
-        response = await post_json(
-            client=self.client,
-            endpoint="/api/v1/chat/completions",
-            json={"model": self.model, "stream": False, "messages": messages},
+        self.timeout = timeout
+        self.client = client or AsyncClient(
+            base_url=base_url, timeout=timeout, headers=headers
         )
 
-        if response.is_error:
-            try:
-                detail = response.json()["error"]  # the API puts its reason here
-            except ValueError, KeyError, TypeError:
-                detail = response.text
-            raise LlmError(f"Model request failed ({response.status_code}): {detail}")
+    @classmethod
+    @abstractmethod
+    def from_config(cls, cfg: ProviderConfig) -> Self:
+        """Build a provider from the user's config; raise LlmError if unusable."""
 
-        try:
-            return cast(str, response.json()["choices"][0]["message"]["content"])
-        except (ValueError, KeyError, TypeError) as e:
-            raise LlmError(f"Unexpected reply from the model: {response.text}") from e
+    async def complete(self, messages: list[Message]) -> str:
+        """Ask the model for the next reply; every failure is raised as LlmError."""
+        response = await post_json(
+            client=self.client,
+            endpoint=self._ENDPOINT,
+            json={"model": self.model, "stream": False, "messages": messages},
+        )
+        raise_for_error(response)
+        return reply_text(response, *self._REPLY_PATH)
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         await self.client.aclose()
 
+
+class OllamaProvider(HttpProvider):
+    _ENDPOINT = "/api/chat"
+    _REPLY_PATH = ("message", "content")
+    DEFAULT_BASE_URL = "http://localhost:11434"
+    DEFAULT_MODEL = "qwen3.8:27b-mlx"
+    BASE_URL_ENV = "OLLAMA_HOST"
+
     @classmethod
-    def from_config(cls, cfg: ProviderConfig) -> OpenrouterProvider:
-        try:
-            return cls(
-                base_url=cfg.base_url,
-                model=cfg.model,
-                timeout=cfg.timeout,
-                api_key_env_var=cfg.api_key_env_var,
-            )
-        except LlmError:
-            raise
-        except Exception as err:
-            raise LlmError(f"Couldn't set up provider 'openrouter': {err}") from err
+    def from_config(cls, cfg: ProviderConfig) -> Self:
+        return cls(
+            base_url=cfg.base_url
+            or os.environ.get(cls.BASE_URL_ENV)
+            or cls.DEFAULT_BASE_URL,
+            model=cfg.model or cls.DEFAULT_MODEL,
+            timeout=DEFAULT_TIMEOUT if cfg.timeout is None else cfg.timeout,
+        )
 
 
-_REGISTRY: dict[str, type[Provider]] = {
-    "ollama": OllamaProvider,
-    "openrouter": OpenrouterProvider,
+class OpenrouterProvider(HttpProvider):
+    _ENDPOINT = "/api/v1/chat/completions"
+    _REPLY_PATH = ("choices", 0, "message", "content")
+    DEFAULT_BASE_URL = "https://eu.openrouter.ai"
+    API_KEY_ENV = "OPENROUTER_API_KEY"  # no DEFAULT_MODEL: a model is required
+
+    @classmethod
+    def from_config(cls, cfg: ProviderConfig) -> Self:
+        if not cfg.model:
+            raise LlmError("openrouter has no default model; pass --model")
+        key_var = cfg.api_key_env_var or cls.API_KEY_ENV
+        if not (token := os.getenv(key_var)):
+            raise LlmError(f"${key_var} is not set")
+        return cls(
+            base_url=cfg.base_url or cls.DEFAULT_BASE_URL,
+            model=cfg.model,
+            timeout=DEFAULT_TIMEOUT if cfg.timeout is None else cfg.timeout,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+
+_REGISTRY: dict[str, ProviderFactory] = {
+    "ollama": OllamaProvider.from_config,
+    "openrouter": OpenrouterProvider.from_config,
 }
 
 
@@ -179,37 +189,22 @@ def provider_names() -> list[str]:
 @asynccontextmanager
 async def open_provider(cfg: ProviderConfig):
     try:
-        factory = _REGISTRY[cfg.provider].from_config
+        factory = _REGISTRY[cfg.provider]
     except KeyError as err:
         raise LlmError(
-            f"Unknown provider: {cfg.provider}; Choose one of {_REGISTRY.keys()}"
+            f"Unknown provider: {cfg.provider}; choose one of {provider_names()}"
         ) from err
 
-    provider = factory(cfg)
-    # needs to be here, because otherwise an error during instansiation that doesn't provide a provider errors in finally due to the nonexisting provider variable.
+    # Set up outside the try/finally below: a failed setup has nothing to close.
+    # Unexpected setup errors become LlmError so front ends can report them.
+    try:
+        provider = factory(cfg)
+    except LlmError:
+        raise
+    except Exception as err:
+        raise LlmError(f"Couldn't set up provider '{cfg.provider}': {err}") from err
 
     try:
         yield provider
-
     finally:
         await provider.aclose()
-
-
-async def main():
-    msgs: list[Message] = [{"role": "user", "content": "Why is the sky blue?"}]
-    cfg = ProviderConfig(provider="ollama", model="qwen3.8:27b-dflash2-nvfp4")
-
-    async with open_provider(cfg) as provider:
-        response = await provider.complete(msgs)
-
-    print(response)
-
-    cfg = ProviderConfig(provider="ollama", model="qwen3.8:27b-mlx")
-    async with open_provider(cfg) as provider:
-        response = await provider.complete(msgs)
-
-    print(response)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
