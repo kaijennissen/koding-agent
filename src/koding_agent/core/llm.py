@@ -25,7 +25,7 @@ class LlmError(Exception):
     """
 
 
-async def llm_call(client: AsyncClient, model: str, messages: list[Message]) -> str:
+async def call_ollama(client: AsyncClient, model: str, messages: list[Message]) -> str:
     """Ask Ollama for the next reply; every failure is raised as LlmError."""
     try:
         response = await client.post(

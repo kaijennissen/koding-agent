@@ -9,14 +9,10 @@ This is the only module that imports both the core and the front ends.
 
 import argparse
 import asyncio
-import os
 import sys
 from collections.abc import Sequence
-from functools import partial
 from pathlib import Path
 from typing import Literal
-
-import httpx2
 
 from koding_agent import __version__
 from koding_agent.banner import RESET, print_banner, prompt_text
@@ -24,38 +20,27 @@ from koding_agent.console import RED, print_event
 from koding_agent.core import (
     DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
-    DEFAULT_MODEL,
     Context,
     LlmError,
     Message,
+    ProviderConfig,
     SkillLibrary,
     build_system_prompt,
-    llm_call,
     load_context,
     load_skills,
+    open_provider,
+    provider_names,
     run_agent,
 )
 
-DEFAULT_OLLAMA_URL = "http://host.docker.internal:11434"  # the Docker host gateway
-LLM_TIMEOUT = 120  # seconds per model request; without streaming, the whole reply
-
 type Mode = Literal["headless", "plain", "tui"]
-
-
-def ollama_url() -> str:
-    """Where Ollama listens: $OLLAMA_HOST (a full URL), else the Docker host gateway."""
-    return os.environ.get("OLLAMA_HOST") or DEFAULT_OLLAMA_URL
-
-
-def ollama_client() -> httpx2.AsyncClient:
-    return httpx2.AsyncClient(base_url=ollama_url(), timeout=LLM_TIMEOUT)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         "koding-agent",
         epilog="environment: OLLAMA_HOST  Ollama base URL, e.g. http://localhost:11434 "
-        f"(default: {DEFAULT_OLLAMA_URL})",
+        "(default); OPENROUTER_API_KEY  key for --provider openrouter",
     )
     parser.add_argument(
         "prompt", nargs="?", help="first message; opens the TUI with it already sent"
@@ -75,8 +60,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "-m",
         "--model",
-        default=DEFAULT_MODEL,
-        help="Ollama model to use (default: %(default)s)",
+        help="model to use (default: the provider's own; required for openrouter)",
     )
     parser.add_argument(
         "-t", "--max-turns", default=DEFAULT_MAX_TURNS, type=int, help="max turns"
@@ -97,7 +81,34 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--skills-dir",
         type=Path,
         metavar="DIR",
-        help="load skills from DIR/*/SKILL.md",
+        default=Path(".agents/skills"),
+        help="load skills from DIR/*/SKILL.md (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--no-skills", action="store_true", help="do not load any skills"
+    )
+    parser.add_argument(
+        "--provider",
+        default="ollama",
+        choices=provider_names(),
+        help="model provider (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--base-url",
+        metavar="URL",
+        help="provider endpoint (default: the provider's own; ollama: $OLLAMA_HOST)",
+    )
+    parser.add_argument(
+        "--api-key-env",
+        metavar="NAME",
+        help="name of the environment variable holding the API key "
+        "(default: the provider's own, e.g. OPENROUTER_API_KEY)",
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        metavar="SECONDS",
+        help="seconds per model request (default: the provider's own, 120)",
     )
     parser.add_argument(
         "-v", "--version", action="version", version=f"%(prog)s {__version__}"
@@ -118,13 +129,13 @@ def select_mode(args: argparse.Namespace) -> Mode:
 
 async def run_headless(
     prompt: str,
-    model: str,
+    cfg: ProviderConfig,
     max_turns: int,
     command_timeout: float,
     skills: SkillLibrary,
     context: Context | None = None,
 ) -> None:
-    async with ollama_client() as client:
+    async with open_provider(cfg) as provider:
         messages: list[Message] = [
             {
                 "role": "system",
@@ -138,7 +149,7 @@ async def run_headless(
             answer, _ = await run_agent(
                 messages,
                 max_turns=max_turns,
-                call=partial(llm_call, client, model),
+                call=provider.complete,
                 skills=skills,
                 on_event=print_event,
                 command_timeout=command_timeout,
@@ -149,14 +160,13 @@ async def run_headless(
 
 
 async def run_plain(
-    model: str,
+    cfg: ProviderConfig,
     max_turns: int,
     command_timeout: float,
     skills: SkillLibrary,
     context: Context | None = None,
 ) -> None:
-    async with ollama_client() as client:
-        call = partial(llm_call, client, model)
+    async with open_provider(cfg) as provider:
         messages: list[Message] = [
             {
                 "role": "system",
@@ -165,7 +175,9 @@ async def run_plain(
                 ),
             }
         ]
-        print_banner(model, context.path.name if context else None, skills.skills)
+        print_banner(
+            provider.model, context.path.name if context else None, skills.skills
+        )
         while True:
             prompt = input(prompt_text())
             if prompt == "exit":
@@ -175,7 +187,7 @@ async def run_plain(
                 answer, messages = await run_agent(
                     messages,
                     max_turns=max_turns,
-                    call=call,
+                    call=provider.complete,
                     skills=skills,
                     on_event=print_event,
                     command_timeout=command_timeout,
@@ -188,7 +200,7 @@ async def run_plain(
 
 
 async def run_tui(
-    model: str,
+    cfg: ProviderConfig,
     max_turns: int,
     first_prompt: str | None,
     command_timeout: float,
@@ -197,10 +209,10 @@ async def run_tui(
 ) -> None:
     from koding_agent.tui.app import AgentApp  # keeps Textual off the -p path
 
-    async with ollama_client() as client:
+    async with open_provider(cfg) as provider:
         app = AgentApp(
-            partial(llm_call, client, model),
-            model=model,
+            provider.complete,
+            model=provider.model,
             max_turns=max_turns,
             first_prompt=first_prompt,
             command_timeout=command_timeout,
@@ -213,45 +225,55 @@ async def run_tui(
 def cli(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     context = None if args.no_context else load_context()
-    skills = load_skills(args.skills_dir)
-    match select_mode(args):
-        case "headless":
-            asyncio.run(
-                run_headless(
-                    prompt=args.headless_prompt,
-                    model=args.model,
-                    max_turns=args.max_turns,
-                    command_timeout=args.command_timeout,
-                    skills=skills,
-                    context=context,
+    skills = load_skills(None if args.no_skills else args.skills_dir)
+    cfg = ProviderConfig(
+        provider=args.provider,
+        model=args.model,
+        base_url=args.base_url,
+        timeout=args.timeout,
+        api_key_env_var=args.api_key_env,
+    )
+    try:  # provider setup errors (bad model, missing key) end the run cleanly
+        match select_mode(args):
+            case "headless":
+                asyncio.run(
+                    run_headless(
+                        prompt=args.headless_prompt,
+                        cfg=cfg,
+                        max_turns=args.max_turns,
+                        command_timeout=args.command_timeout,
+                        skills=skills,
+                        context=context,
+                    )
                 )
-            )
-        case "plain":
-            asyncio.run(
-                run_plain(
-                    model=args.model,
-                    max_turns=args.max_turns,
-                    command_timeout=args.command_timeout,
-                    skills=skills,
-                    context=context,
+            case "plain":
+                asyncio.run(
+                    run_plain(
+                        cfg=cfg,
+                        max_turns=args.max_turns,
+                        command_timeout=args.command_timeout,
+                        skills=skills,
+                        context=context,
+                    )
                 )
-            )
-        case "tui":
-            if not (sys.stdin.isatty() and sys.stdout.isatty()):
-                sys.exit(
-                    "The TUI needs an interactive terminal. "
-                    "Use -p PROMPT for a one-shot run, or --plain for the REPL."
+            case "tui":
+                if not (sys.stdin.isatty() and sys.stdout.isatty()):
+                    sys.exit(
+                        "The TUI needs an interactive terminal. "
+                        "Use -p PROMPT for a one-shot run, or --plain for the REPL."
+                    )
+                asyncio.run(
+                    run_tui(
+                        cfg,
+                        max_turns=args.max_turns,
+                        first_prompt=args.prompt,
+                        command_timeout=args.command_timeout,
+                        skills=skills,
+                        context=context,
+                    )
                 )
-            asyncio.run(
-                run_tui(
-                    model=args.model,
-                    max_turns=args.max_turns,
-                    first_prompt=args.prompt,
-                    command_timeout=args.command_timeout,
-                    skills=skills,
-                    context=context,
-                )
-            )
+    except LlmError as e:
+        sys.exit(f"{RED}{e}{RESET}")
 
 
 if __name__ == "__main__":

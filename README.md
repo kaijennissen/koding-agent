@@ -6,7 +6,7 @@
 </h1>
 
 A coding agent built from scratch: a small act → observe → decide loop that asks a
-local LLM (served by Ollama) for a shell command, runs it, and feeds the output back
+LLM (local via Ollama by default, or hosted via OpenRouter) for a shell command, runs it, and feeds the output back
 until the model declares the task done.
 
 ![koding agent start-up banner](docs/images/startup-banner.png)
@@ -36,7 +36,10 @@ What it does today:
 - **Bounded runs** – a turn budget (`--max-turns`), a timeout per command (`--command-timeout`, default 120 s),
   and truncated tool output (first 2000 chars of stdout and of stderr) so a runaway
   turn can't flood the context.
-- **Configurable model** – `--model` picks the Ollama model (default `qwen3.8:27b-mlx`).
+- **Configurable provider** – `--provider` picks the backend (`ollama` by default, or
+  `openrouter`); `--model`, `--base-url`, `--api-key-env` and `--timeout` configure it.
+  Ollama defaults to `qwen3.8:27b-mlx`; OpenRouter has no default model. See
+  [Providers](#providers).
 - **Parallel tool calls** – a turn may batch several independent `<bash>` actions;
   mixing `<bash>` and `<exit>` is rejected with an error fed back to the model.
   (Lives on the `multiple_tool_calls` branch; not yet merged into `main`.)
@@ -45,7 +48,7 @@ What it does today:
   project state. Design: [`thoughts/shared/plans/001_hardened_agent_container_design.md`](thoughts/shared/plans/001_hardened_agent_container_design.md).
 - **Quality gates** – ruff, pyright (strict), import-linter, pytest, pre-commit, and CI.
 
-Known limits: one model backend (Ollama), no file-edit tool beyond what bash
+Known limits: two model backends (Ollama, OpenRouter), no file-edit tool beyond what bash
 offers (arguably not a limit, see below), no persistence between sessions, and
 the container still has network access to reach Ollama. Docker narrows the
 blast radius; it is not a perfect sandbox. Review the agent's diff before you
@@ -64,11 +67,11 @@ The [`diary.md`](diary.md) logs pitfalls and design decisions made along the way
 
 ## Develop
 
-Development uses uv with Python 3.14.4; `uv sync` builds the environment. The
-agent reaches Ollama at `http://host.docker.internal:11434`, the host as seen from
-a container, so develop **inside a container** as well. To run it directly on the
-host instead, point it elsewhere with a full URL:
-`export OLLAMA_HOST=http://localhost:11434`.
+Development uses uv with Python 3.14.4; `uv sync` builds the environment. Without
+configuration the agent reaches Ollama at `http://localhost:11434`. The container
+image sets `OLLAMA_HOST=http://host.docker.internal:11434` (the host as seen from a
+container), so develop **inside a container** as well. Override the endpoint with
+`--base-url` or `export OLLAMA_HOST=<full URL>`.
 
 ```bash
 uv run ruff check .     # lint
@@ -89,7 +92,8 @@ src/koding_agent/
     prompts.py      # system prompt templates and construction
     protocol.py     # action parsing and protocol errors
     events.py       # event types, emission and tool lifecycle
-    llm.py          # message/call types and the Ollama client
+    llm.py          # message/call types and LlmError
+    providers.py    # model providers (Ollama, OpenRouter), config and registry
     limits.py       # timeout and output limits shared by prompts and Bash tool
     tools/          # bash.py, skills.py
   console.py        # CLI event printing and terminal colours
@@ -191,3 +195,64 @@ Notes:
   files) into the clone.
 - On a Linux host the clone must be writable by UID 1000, the container's `agent`
   user.
+
+## Providers
+
+Choose the model backend with `--provider` (default `ollama`). Flags you leave out
+fall back to the provider's own defaults. All modes (TUI, `-p`, `--plain`) work with
+every provider.
+
+| Flag | Meaning |
+| --- | --- |
+| `--provider {ollama,openrouter}` | backend to use (default `ollama`) |
+| `-m/--model` | model name; Ollama has a default, OpenRouter requires one |
+| `--base-url` | provider endpoint (Ollama: falls back to `$OLLAMA_HOST`, then `http://localhost:11434`) |
+| `--api-key-env` | name of the environment variable holding the API key (OpenRouter: `OPENROUTER_API_KEY`) |
+| `--timeout` | seconds per model request (default 120) |
+
+A missing model or API key, or an unknown provider, fails immediately with a message.
+
+The container image sets `OLLAMA_HOST=http://host.docker.internal:11434`, so Ollama
+on the host works from inside the container without extra flags. To use OpenRouter
+in the container you have to pass the key in (`docker run -e OPENROUTER_API_KEY ...`),
+which makes it readable by every command the agent runs; use a key with a spending
+limit.
+
+### Running without Docker
+
+> [!CAUTION]
+> **This runs model-written shell commands directly on your machine.**
+> The agent executes them with `shell=True` and no filtering, with your user's
+> permissions and environment. A wrong or malicious command can delete files,
+> read credentials, or exfiltrate data. Prefer the container setup in
+> [Run the agent](#run-the-agent). If you must run on the host, use a throwaway
+> clone of a repository, a separate user or VM if possible, and nothing secret
+> in the working directory or environment. This matters most with hosted
+> providers: any API key you export is visible to every command the agent runs.
+
+Set up once with `uv sync`, then:
+
+**Ollama (local, default)**
+
+```sh
+ollama serve &                      # skip if Ollama is already running
+ollama pull qwen3.8:27b-mlx         # the default model
+
+uv run koding-agent -p "list the files in this repo"
+uv run koding-agent --model <other-model> --plain
+uv run koding-agent --base-url http://other-host:11434 -p "..."
+```
+
+No API key is needed.
+
+**OpenRouter (hosted)**
+
+```sh
+export OPENROUTER_API_KEY=sk-or-...   # read from the environment, never from a file
+
+uv run koding-agent --provider openrouter --model <vendor/model-id> -p "..."
+```
+
+OpenRouter model IDs look like `vendor/model` (see openrouter.ai/models). Requests go
+to `https://eu.openrouter.ai` unless `--base-url` is given. To read the key from a
+different variable, use `--api-key-env MY_KEY_VAR`.
