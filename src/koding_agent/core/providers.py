@@ -1,8 +1,7 @@
 """Model providers: config, the shared HTTP skeleton, and the registry."""
 
-import asyncio
 import os
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
@@ -23,9 +22,6 @@ class ProviderConfig:
     api_key_env_var: str | None = None
 
 
-type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
-
-
 class Provider(Protocol):
     """What consumers (the agent loop, front ends) need from a provider."""
 
@@ -43,7 +39,7 @@ DEFAULT_TIMEOUT = 120  # seconds; replies are not streamed
 async def post_json(
     *,
     client: AsyncClient, endpoint: str, json: dict[str, str | bool | list[Message]]
-):
+) -> Response:
     try:
         return await client.post(endpoint, json=json)
     except httpx2.HTTPError as e:
@@ -155,7 +151,7 @@ class OllamaProvider(HttpProvider):
             or os.environ.get(cls.BASE_URL_ENV)
             or cls.DEFAULT_BASE_URL,
             model=cfg.model or cls.DEFAULT_MODEL,
-            timeout=cfg.timeout or DEFAULT_TIMEOUT,
+            timeout=DEFAULT_TIMEOUT if cfg.timeout is None else cfg.timeout,
         )
 
 
@@ -175,7 +171,7 @@ class OpenrouterProvider(HttpProvider):
         return cls(
             base_url=cfg.base_url or cls.DEFAULT_BASE_URL,
             model=cfg.model,
-            timeout=cfg.timeout or DEFAULT_TIMEOUT,
+            timeout=DEFAULT_TIMEOUT if cfg.timeout is None else cfg.timeout,
             headers={"Authorization": f"Bearer {token}"},
         )
 
@@ -196,7 +192,7 @@ async def open_provider(cfg: ProviderConfig):
         factory = _REGISTRY[cfg.provider]
     except KeyError as err:
         raise LlmError(
-            f"Unknown provider: {cfg.provider}; Choose one of {provider_names()}"
+            f"Unknown provider: {cfg.provider}; choose one of {provider_names()}"
         ) from err
 
     # Set up outside the try/finally below: a failed setup has nothing to close.
@@ -212,23 +208,3 @@ async def open_provider(cfg: ProviderConfig):
         yield provider
     finally:
         await provider.aclose()
-
-
-async def main():
-    msgs: list[Message] = [{"role": "user", "content": "Why is the sky blue?"}]
-    cfg = ProviderConfig(provider="ollama", model="qwen3.8:27b-dflash2-nvfp4")
-
-    async with open_provider(cfg) as provider:
-        response = await provider.complete(msgs)
-
-    print(response)
-
-    cfg = ProviderConfig(provider="ollama", model="qwen3.8:27b-mlx")
-    async with open_provider(cfg) as provider:
-        response = await provider.complete(msgs)
-
-    print(response)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
