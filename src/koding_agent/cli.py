@@ -60,8 +60,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "-m",
         "--model",
-        help="model to use (default: the provider's own; "
-        "required for openrouter)",
+        help="model to use (default: the provider's own; required for openrouter)",
     )
     parser.add_argument(
         "-t", "--max-turns", default=DEFAULT_MAX_TURNS, type=int, help="max turns"
@@ -82,7 +81,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--skills-dir",
         type=Path,
         metavar="DIR",
-        help="load skills from DIR/*/SKILL.md",
+        default=Path(".agents/skills"),
+        help="load skills from DIR/*/SKILL.md (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--no-skills", action="store_true", help="do not load any skills"
     )
     parser.add_argument(
         "--provider",
@@ -222,7 +225,7 @@ async def run_tui(
 def cli(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     context = None if args.no_context else load_context()
-    skills = load_skills(args.skills_dir)
+    skills = load_skills(None if args.no_skills else args.skills_dir)
     cfg = ProviderConfig(
         provider=args.provider,
         model=args.model,
