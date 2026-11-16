@@ -231,6 +231,22 @@ class TestToolRow:
         assert str(row.query_one(".kind", Static).render()) == kind
         assert str(row.query_one(".cmd", Static).render()) == subject
 
+    async def test_tooltip_shows_the_full_command(self, row: ToolRow) -> None:
+        assert row.tooltip == "Bash: ls"
+
+    async def test_click_toggles_the_full_command(self) -> None:
+        """Collapsed it is one truncated line; a click wraps the whole command."""
+        app = RowApp(ToolRow(BashCall(id="t1", cmd="echo " + "x" * 200)))
+        async with app.run_test(size=(40, 10)) as pilot:
+            row = app.row
+            assert row.size.height == 1
+            await pilot.click(ToolRow)
+            assert row.has_class("expanded")
+            assert row.size.height > 1
+            await pilot.click(ToolRow)
+            assert not row.has_class("expanded")
+            assert row.size.height == 1
+
     async def test_kind_is_muted(self, row: ToolRow) -> None:
         """The kind is secondary information: dimmer and italic, not bold."""
         kind, cmd = row.query_one(".kind"), row.query_one(".cmd")
