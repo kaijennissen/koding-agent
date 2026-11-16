@@ -11,19 +11,23 @@ from typing import Literal, assert_never
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal, VerticalScroll
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.message import Message
-from textual.widgets import Footer, Static, TextArea
+from textual.widgets import Footer, ListItem, ListView, Static, TextArea
 
 from koding_agent.banner import render_banner
 from koding_agent.core import (
     DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
+    BashCall,
+    BashResult,
     Context,
     Event,
     LlmCall,
     LlmError,
+    SkillCall,
     SkillLibrary,
+    SkillResult,
     ToolCall,
     ToolCancelled,
     ToolEnd,
@@ -40,17 +44,16 @@ from koding_agent.core import (
 type Status = Literal["running", "ok", "failed", "cancelled"]
 
 
-class ToolRow(Horizontal):
+class ToolRow(ListItem):
     """One tool call: a coloured bullet and the command on a single line.
 
-    Clicking the row toggles the `expanded` class, which wraps the full command.
-
+    It is a ListItem, so the ToolPanel's ListView handles clicks and Up/Down.
     The status is a CSS class (`running`, `ok`, `failed`, `cancelled`), so the
     colours live in CSS and tests can assert on the class.
     """
 
     DEFAULT_CSS = """
-    ToolRow { height: 1; }
+    ToolRow { layout: horizontal; height: 1; }
     ToolRow .bullet { width: 2; }
     ToolRow .kind { width: auto; margin-right: 1; color: $text-muted; text-style: italic; }
     ToolRow .cmd { width: 1fr; text-wrap: nowrap; text-overflow: ellipsis; }
@@ -58,14 +61,13 @@ class ToolRow(Horizontal):
     ToolRow.ok .bullet { color: $success; }
     ToolRow.failed .bullet { color: $error; }
     ToolRow.cancelled .bullet { color: $text-muted; }
-    ToolRow.expanded { height: auto; }
-    ToolRow.expanded .cmd { text-wrap: wrap; text-overflow: clip; }
     """
 
     def __init__(self, tool: ToolCall) -> None:
         super().__init__(classes="running")
         self.tool = tool
         self.status: Status = "running"
+        self.result: ToolResult | None = None  # set when the tool finishes
 
     def compose(self) -> ComposeResult:
         yield Static("●", classes="bullet")
@@ -75,21 +77,75 @@ class ToolRow(Horizontal):
     def on_mount(self) -> None:
         self.tooltip = self.tool.display  # hover shows the full command
 
-    def on_click(self) -> None:
-        """A click toggles between one truncated line and the full command."""
-        self.toggle_class("expanded")
-
     def set_status(self, status: Status) -> None:
         self.remove_class(self.status)
         self.add_class(status)
         self.status = status
 
 
-class ToolPanel(VerticalScroll):
-    """Right-hand column with one ToolRow per tool call; Tab hides it."""
+def describe(tool: ToolCall, status: Status, result: ToolResult | None) -> str:
+    """The details text for one tool call: full command, outcome and output."""
+    lines = [f"{tool.kind} · {status}"]
+    match tool:
+        case BashCall(cmd=cmd):
+            lines.append(f"$ {cmd}")  # the real command, newlines kept
+        case SkillCall(name=name):
+            lines.append(f"skill: {name}")
+    match result:
+        case None:
+            pass
+        case BashResult(timed_out=True):
+            lines.append("killed: hit the time limit")
+        case BashResult(returncode=code, stdout=stdout, stderr=stderr):
+            lines.append(f"exit code: {code}")
+            if stdout:
+                lines += ["", "── stdout ──", stdout.rstrip()]
+            if stderr:
+                lines += ["", "── stderr ──", stderr.rstrip()]
+        case SkillResult(skill=skill, available=available):
+            if skill is None:
+                lines.append(f"unknown skill; available: {', '.join(available) or '-'}")
+            else:
+                lines.append(f"loaded from {skill.dir}")
+    return "\n".join(lines)
+
+
+NO_SELECTION = "Click a tool call, or press Ctrl+T and use ↑/↓."
+
+
+class ToolPanel(Vertical):
+    """Right-hand column: tool calls on top, details of the highlighted one below.
+
+    Tab hides it; Ctrl+T focuses the list, Escape goes back to the prompt.
+    """
+
+    DEFAULT_CSS = """
+    ToolPanel #tool-list { height: 1fr; background: transparent; }
+    ToolPanel #details { height: 2fr; border-top: solid $secondary; }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield ListView(id="tool-list", initial_index=None)
+        with VerticalScroll(id="details"):
+            yield Static(NO_SELECTION, id="tool-details", markup=False)
 
     def on_mount(self) -> None:
         self.border_title = "Tools"
+
+    async def add(self, row: ToolRow) -> None:
+        await self.query_one("#tool-list", ListView).append(row)
+
+    def show(self, row: ToolRow | None) -> None:
+        text = describe(row.tool, row.status, row.result) if row else NO_SELECTION
+        self.query_one("#tool-details", Static).update(Text(text))  # Text: no markup
+
+    def refresh_row(self, row: ToolRow) -> None:
+        """Called after a row changed; redraw the details if it is the shown one."""
+        if row.highlighted:
+            self.show(row)
+
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        self.show(event.item if isinstance(event.item, ToolRow) else None)
 
 
 class PromptArea(TextArea):
@@ -155,7 +211,7 @@ class AgentApp(App[None]):
     CSS = """
     #main { height: 1fr; }
     #conversation { width: 1fr; border: round $primary; padding: 0 1; }
-    #tools { width: 32; border: round $secondary; padding: 0 1; }
+    #tools { width: 30%; min-width: 32; max-width: 80; border: round $secondary; padding: 0 1; }
     #tools.collapsed { display: none; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     #prompt { height: auto; min-height: 3; max-height: 10; }
@@ -166,6 +222,8 @@ class AgentApp(App[None]):
 
     BINDINGS = [
         Binding("tab", "toggle_tools", "Tools", priority=True),
+        Binding("ctrl+t", "focus_tools", "Inspect", priority=True),
+        Binding("escape", "focus_prompt", "Back", show=False),
         Binding("ctrl+c", "quit", "Exit", priority=True),
     ]
 
@@ -229,6 +287,17 @@ class AgentApp(App[None]):
     def action_toggle_tools(self) -> None:
         self.query_one("#tools").toggle_class("collapsed")
 
+    def action_focus_tools(self) -> None:
+        """Show the panel and focus the list; start on the latest tool call."""
+        self.query_one("#tools").remove_class("collapsed")
+        tool_list = self.query_one("#tool-list", ListView)
+        if tool_list.index is None and len(tool_list):
+            tool_list.index = len(tool_list) - 1
+        tool_list.focus()
+
+    def action_focus_prompt(self) -> None:
+        self.query_one("#prompt", PromptArea).focus()
+
     def forward_event(self, event: Event) -> None:
         """The core's OnEvent callback: translate to a message and return at once."""
         match event:
@@ -246,14 +315,19 @@ class AgentApp(App[None]):
     async def on_tool_started(self, message: ToolStarted) -> None:
         row = ToolRow(message.tool)
         self.rows[message.tool.id] = row
-        await self.query_one("#tools", ToolPanel).mount(row)
+        await self.query_one("#tools", ToolPanel).add(row)
 
     def on_tool_finished(self, message: ToolFinished) -> None:
         # A missing id means an end without a start: a bug, so let it raise.
-        self.rows[message.tool.id].set_status(message.result.status)
+        row = self.rows[message.tool.id]
+        row.result = message.result
+        row.set_status(message.result.status)
+        self.query_one("#tools", ToolPanel).refresh_row(row)
 
     def on_tool_aborted(self, message: ToolAborted) -> None:
-        self.rows[message.tool.id].set_status("cancelled")
+        row = self.rows[message.tool.id]
+        row.set_status("cancelled")
+        self.query_one("#tools", ToolPanel).refresh_row(row)
 
     def on_turn_started(self, message: TurnStarted) -> None:
         self.query_one("#status", Static).update(
