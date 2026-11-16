@@ -187,7 +187,14 @@ Notes:
 - Omit `--prompt` to open the TUI (it needs `-it`, as in the command above), or add
   `--plain` for the line-based REPL. Omit the trailing command to get an
   interactive shell in the same container instead.
-- The image ships Python, `uv`, `curl`, `jq` and `vim`. If the target repository
+- The image ships Python, `uv`, Node.js (for pyright), `git`, `curl`, `jq` and
+  `vim`. Inside the container, `uv run pytest`, `uv run ruff check`,
+  `uv run pyright` and `uv run pre-commit run` work in `/workspace`: uv creates
+  `/workspace/.venv` with the dev dependencies on first use (this needs network
+  access to PyPI). The uv and pre-commit caches live in `/workspace/.uv-cache`
+  and `/workspace/.pre-commit-cache`, because `/tmp` is small and mounted
+  `noexec`. uv always uses the image's Python and never downloads one.
+- If the target repository
   needs other toolchains, add them to the `Dockerfile`; the agent can't install
   system packages (non-root, read-only root filesystem).
 - Only clone repositories you are willing to let the agent modify, and review the

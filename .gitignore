@@ -202,6 +202,10 @@ env.bak/
 venv.bak/
 
 # uv: the lockfile is committed for reproducible installs, so it is NOT ignored.
+# Container caches for uv and pre-commit (see Dockerfile).
+.uv-cache/
+.uv-tmp/
+.pre-commit-cache/
 
 # Spyder project settings
 .spyderproject
