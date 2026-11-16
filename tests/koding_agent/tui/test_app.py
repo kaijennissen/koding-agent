@@ -24,6 +24,7 @@ from koding_agent.core import (
     LlmError,
     Message,
     SkillCall,
+    SkillResult,
     ToolCall,
     ToolCancelled,
     ToolEnd,
@@ -31,10 +32,12 @@ from koding_agent.core import (
     TurnStart,
 )
 from koding_agent.tui.app import (
+    NO_SELECTION,
     AgentApp,
     PromptArea,
     Status,
     ToolRow,
+    describe,
 )
 
 MODEL = "some-model"
@@ -248,25 +251,91 @@ class TestToolRow:
     async def test_tooltip_shows_the_full_command(self, row: ToolRow) -> None:
         assert row.tooltip == "Bash: ls"
 
-    async def test_click_toggles_the_full_command(self) -> None:
-        """Collapsed it is one truncated line; a click wraps the whole command."""
-        app = RowApp(ToolRow(BashCall(id="t1", cmd="echo " + "x" * 200)))
-        async with app.run_test(size=(40, 10)) as pilot:
-            row = app.row
-            assert row.size.height == 1
-            await pilot.click(ToolRow)
-            assert row.has_class("expanded")
-            assert row.size.height > 1
-            await pilot.click(ToolRow)
-            assert not row.has_class("expanded")
-            assert row.size.height == 1
-
     async def test_kind_is_muted(self, row: ToolRow) -> None:
         """The kind is secondary information: dimmer and italic, not bold."""
         kind, cmd = row.query_one(".kind"), row.query_one(".cmd")
         assert kind.styles.color != cmd.styles.color
         assert kind.styles.text_style.italic
         assert not kind.styles.text_style.bold
+
+
+class TestDescribe:
+    """The details text is a pure function, so it is tested without an app."""
+
+    def test_running_bash_shows_the_full_multiline_command(self) -> None:
+        text = describe(BashCall(id="a", cmd="echo a\necho b"), "running", None)
+        assert text == "Bash · running\n$ echo a\necho b"
+
+    def test_finished_bash_shows_exit_code_and_output(self) -> None:
+        text = describe(LS, "failed", BashResult.completed("ls", "out\n", "boom", 1))
+        assert "exit code: 1" in text
+        assert "── stdout ──\nout" in text
+        assert "── stderr ──\nboom" in text
+
+    def test_timeout_is_reported(self) -> None:
+        assert "time limit" in describe(LS, "failed", BashResult.timeout("ls"))
+
+    def test_unknown_skill_lists_the_available_ones(self) -> None:
+        result = SkillResult(name="x", skill=None, available=("pdf", "show-me"))
+        text = describe(SkillCall(id="s", name="x"), "failed", result)
+        assert "unknown skill; available: pdf, show-me" in text
+
+
+class TestToolInspection:
+    """Clicking or arrowing through the tool list shows the details below it."""
+
+    @staticmethod
+    def details(app: AgentApp) -> str:
+        return str(app.query_one("#tool-details", Static).render())
+
+    async def start_two(self, app: AgentApp, pilot: Pilot[None]) -> None:
+        app.forward_event(ToolStart(LS))
+        app.forward_event(ToolEnd(LS, FAILED))
+        app.forward_event(ToolStart(BashCall(id="b", cmd="pwd")))
+        await pilot.pause()
+
+    async def test_nothing_is_selected_at_first(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await self.start_two(app, pilot)
+        assert self.details(app) == NO_SELECTION
+
+    async def test_click_shows_the_details(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await self.start_two(app, pilot)
+        await pilot.click(row_for(app, "a"))
+        await pilot.pause()
+        assert "$ ls" in self.details(app)
+        assert "boom" in self.details(app)
+
+    async def test_ctrl_t_starts_on_the_latest_and_arrows_navigate(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await self.start_two(app, pilot)
+        await pilot.press("ctrl+t")
+        await pilot.pause()
+        assert self.details(app).startswith("Bash · running\n$ pwd")
+        await pilot.press("up")
+        await pilot.pause()
+        assert "$ ls" in self.details(app)
+
+    async def test_escape_returns_to_the_prompt(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await self.start_two(app, pilot)
+        await pilot.press("ctrl+t", "escape")
+        assert app.query_one("#prompt", PromptArea).has_focus
+
+    async def test_details_update_when_the_shown_tool_finishes(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await self.start_two(app, pilot)
+        await pilot.press("ctrl+t")
+        app.forward_event(ToolEnd(BashCall(id="b", cmd="pwd"), ok("pwd")))
+        await pilot.pause()
+        assert "exit code: 0" in self.details(app)
+        assert "pwd output" in self.details(app)
 
 
 class TestCoreEvents:
