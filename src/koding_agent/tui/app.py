@@ -155,7 +155,7 @@ class AgentApp(App[None]):
     CSS = """
     #main { height: 1fr; }
     #conversation { width: 1fr; border: round $primary; padding: 0 1; }
-    #tools { width: 32; border: round $secondary; padding: 0 1; }
+    #tools { width: 30%; min-width: 32; max-width: 80; border: round $secondary; padding: 0 1; }
     #tools.collapsed { display: none; }
     #status { height: 1; padding: 0 1; color: $text-muted; }
     #prompt { height: auto; min-height: 3; max-height: 10; }

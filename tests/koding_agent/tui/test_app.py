@@ -109,6 +109,20 @@ class TestLayout:
         assert app.query_one("#conversation", VerticalScroll).children[0] is banner
         assert app.query_one("#prompt", PromptArea).has_focus
 
+    @pytest.mark.parametrize(
+        "screen_width,tools_width",
+        [
+            pytest.param(80, 32, id="narrow-uses-min"),
+            pytest.param(200, 60, id="30-percent"),
+            pytest.param(400, 80, id="wide-uses-max"),
+        ],
+    )
+    async def test_tools_panel_scales_with_the_screen(
+        self, app: AgentApp, screen_width: int, tools_width: int
+    ) -> None:
+        async with app.run_test(size=(screen_width, 30)):
+            assert app.query_one("#tools").outer_size.width == tools_width
+
     async def test_tab_toggles_tools_panel(
         self, app: AgentApp, pilot: Pilot[None]
     ) -> None:
