@@ -43,6 +43,8 @@ type Status = Literal["running", "ok", "failed", "cancelled"]
 class ToolRow(Horizontal):
     """One tool call: a coloured bullet and the command on a single line.
 
+    Clicking the row toggles the `expanded` class, which wraps the full command.
+
     The status is a CSS class (`running`, `ok`, `failed`, `cancelled`), so the
     colours live in CSS and tests can assert on the class.
     """
@@ -56,6 +58,8 @@ class ToolRow(Horizontal):
     ToolRow.ok .bullet { color: $success; }
     ToolRow.failed .bullet { color: $error; }
     ToolRow.cancelled .bullet { color: $text-muted; }
+    ToolRow.expanded { height: auto; }
+    ToolRow.expanded .cmd { text-wrap: wrap; text-overflow: clip; }
     """
 
     def __init__(self, tool: ToolCall) -> None:
@@ -67,6 +71,13 @@ class ToolRow(Horizontal):
         yield Static("●", classes="bullet")
         yield Static(self.tool.kind, classes="kind", markup=False)
         yield Static(self.tool.subject, classes="cmd", markup=False)
+
+    def on_mount(self) -> None:
+        self.tooltip = self.tool.display  # hover shows the full command
+
+    def on_click(self) -> None:
+        """A click toggles between one truncated line and the full command."""
+        self.toggle_class("expanded")
 
     def set_status(self, status: Status) -> None:
         self.remove_class(self.status)
