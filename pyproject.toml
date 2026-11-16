@@ -7,7 +7,7 @@ packages = ["src/koding_agent"]
 
 [project]
 name = "koding-agent"
-version = "0.4.0"
+version = "0.4.1"
 description = "A coding agent built from scratch with an XML action loop calling Ollama."
 requires-python = ">=3.14.4"
 dependencies = [
