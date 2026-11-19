@@ -16,7 +16,7 @@ from koding_agent.core.events import (
 )
 from koding_agent.core.limits import DEFAULT_COMMAND_TIMEOUT, DEFAULT_MAX_TURNS
 from koding_agent.core.llm import LlmCall, LlmError, Message
-from koding_agent.core.loop import run_agent
+from koding_agent.core.loop import OutOfTurns, run_agent
 from koding_agent.core.prompts import build_system_prompt
 from koding_agent.core.providers import ProviderConfig, open_provider, provider_names
 from koding_agent.core.tools import ToolCall, ToolResult
@@ -40,6 +40,7 @@ __all__ = [
     "LlmError",
     "Message",
     "OnEvent",
+    "OutOfTurns",
     "ProviderConfig",
     "Skill",
     "SkillCall",

@@ -124,7 +124,9 @@ koding-agent -p "fix the bug"   # headless: run once, print the answer
 koding-agent --plain            # line-based REPL
 ```
 
-`-t/--max-turns N` applies to all modes. Combining `-p`, `--plain` and a positional
+`-t/--max-turns N` applies to all modes. Running out of turns without an `<exit>`
+is reported as an error: `-p` exits non-zero, the TUI and `--plain` keep the session
+so you can ask the agent to continue. Combining `-p`, `--plain` and a positional
 prompt is an error.
 
 - **TUI** – conversation on the left, a live list of tool calls on the right
@@ -134,7 +136,7 @@ prompt is an error.
   in the prompt. If the model can't be reached the error is shown and the turn is
   dropped from the history, so you can simply send again.
 - **Headless (`-p`)** – no terminal needed. Turn and tool progress goes to stdout,
-  followed by the answer. A model failure exits non-zero.
+  followed by the answer. A model failure or running out of turns exits non-zero.
 - **`--plain`** – the original REPL. Type `exit` to leave.
 
 The TUI needs an interactive terminal on both stdin and stdout. Without one (a pipe,

@@ -23,6 +23,7 @@ from koding_agent.core import (
     Context,
     LlmError,
     Message,
+    OutOfTurns,
     ProviderConfig,
     SkillLibrary,
     build_system_prompt,
@@ -163,7 +164,7 @@ async def run_headless(
                 on_event=print_event,
                 command_timeout=command_timeout,
             )
-        except LlmError as e:
+        except (LlmError, OutOfTurns) as e:
             sys.exit(f"{RED}{e}{RESET}")  # one-shot: report and fail
         print("\n" + answer + "\n")
 
@@ -201,8 +202,9 @@ async def run_plain(
                     on_event=print_event,
                     command_timeout=command_timeout,
                 )
-            except LlmError as e:
-                # Keep the session: history is still valid, so the user can retry.
+            except (LlmError, OutOfTurns) as e:
+                # Keep the session: history is still valid, so the user can retry
+                # (or, after OutOfTurns, ask the agent to continue).
                 print(f"{RED}{e}{RESET}")
                 continue
             print("\n" + answer + "\n")
