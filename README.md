@@ -37,8 +37,8 @@ What it does today:
   and truncated tool output (first 2000 chars of stdout and of stderr) so a runaway
   turn can't flood the context.
 - **Configurable provider** – `--provider` picks the backend (`ollama` by default, or
-  `openrouter`); `--model`, `--base-url`, `--api-key-env` and `--timeout` configure it.
-  Ollama defaults to `qwen3.8:27b-mlx`; OpenRouter has no default model. See
+  `openrouter` / `openai`, any OpenAI-compatible server); `--model`, `--base-url`, `--api-key-env` and `--timeout` configure it.
+  Ollama defaults to `qwen3.8:27b-mlx`; the OpenAI-style providers have no default model. See
   [Providers](#providers).
 - **Parallel tool calls** – a turn may batch several independent `<bash>` actions;
   mixing `<bash>` and `<exit>` is rejected with an error fed back to the model.
@@ -211,10 +211,10 @@ every provider.
 
 | Flag | Meaning |
 | --- | --- |
-| `--provider {ollama,openrouter}` | backend to use (default `ollama`) |
-| `-m/--model` | model name; Ollama has a default, OpenRouter requires one |
-| `--base-url` | provider endpoint (Ollama: falls back to `$OLLAMA_HOST`, then `http://localhost:11434`) |
-| `--api-key-env` | name of the environment variable holding the API key (OpenRouter: `OPENROUTER_API_KEY`) |
+| `--provider {ollama,openai,openrouter}` | backend to use (default `ollama`) |
+| `-m/--model` | model name; Ollama has a default, the others require one |
+| `--base-url` | provider endpoint. Ollama: the bare host (falls back to `$OLLAMA_HOST`, then `http://localhost:11434`). `openai`/`openrouter`: the API root including `/v1`, e.g. `https://api.openai.com/v1` |
+| `--api-key-env` | name of the environment variable holding the API key (`openai`: `OPENAI_API_KEY`, `openrouter`: `OPENROUTER_API_KEY`) |
 | `--timeout` | seconds per model request (default 120) |
 
 A missing model or API key, or an unknown provider, fails immediately with a message.
@@ -261,5 +261,5 @@ uv run koding-agent --provider openrouter --model <vendor/model-id> -p "..."
 ```
 
 OpenRouter model IDs look like `vendor/model` (see openrouter.ai/models). Requests go
-to `https://eu.openrouter.ai` unless `--base-url` is given. To read the key from a
+to `https://eu.openrouter.ai/api/v1` unless `--base-url` is given. `--provider openai` works the same way (`OPENAI_API_KEY`, `https://api.openai.com/v1`), and `--base-url` points either at any other OpenAI-compatible server. `--base-url` is the API root including `/v1`; before this change the `openrouter` provider took the bare host. To read the key from a
 different variable, use `--api-key-env MY_KEY_VAR`.
