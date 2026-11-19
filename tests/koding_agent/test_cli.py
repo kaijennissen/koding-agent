@@ -1,7 +1,12 @@
 """Mode selection and argument rules of the command line."""
 
+import re
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
+
 import pytest
 
+from fakes import replies
 from koding_agent import cli
 from koding_agent.cli import (
     Mode,
@@ -126,3 +131,44 @@ def test_provider_setup_error_exits_cleanly(monkeypatch: pytest.MonkeyPatch) -> 
 def test_timeout_must_be_positive(value: str) -> None:
     with pytest.raises(SystemExit):
         parse_args(["--timeout", value])
+
+
+class FakeProvider:
+    """A provider that answers from a script, standing in for `open_provider`."""
+
+    def __init__(self, *script: str) -> None:
+        self.model = "fake"
+        self.complete = replies(*script)
+
+
+@pytest.mark.parametrize(
+    ("script", "exit_code"),
+    [
+        pytest.param(["<action><exit>done</exit></action>"], None, id="exit-0"),
+        pytest.param(
+            ["<action><bash>true</bash></action>"],
+            "Ran out of turns (1) without an <exit> action.",
+            id="out-of-turns-fails",
+        ),
+    ],
+)
+def test_headless_exit_status(
+    monkeypatch: pytest.MonkeyPatch, script: list[str], exit_code: str | None
+) -> None:
+    """A one-shot run fails (non-zero exit) when it never reaches <exit>.
+
+    sys.exit(str) exits with status 1; returning normally exits with 0.
+    """
+
+    @asynccontextmanager
+    async def fake_open_provider(_cfg: object) -> AsyncGenerator[FakeProvider]:
+        yield FakeProvider(*script)
+
+    monkeypatch.setattr(cli, "open_provider", fake_open_provider)
+    argv = ["-p", "task", "-t", "1", "--no-context", "--no-skills"]
+
+    if exit_code is None:
+        cli.cli(argv)
+    else:
+        with pytest.raises(SystemExit, match=re.escape(exit_code)):
+            cli.cli(argv)

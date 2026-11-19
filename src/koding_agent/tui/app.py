@@ -25,6 +25,7 @@ from koding_agent.core import (
     Event,
     LlmCall,
     LlmError,
+    OutOfTurns,
     SkillCall,
     SkillLibrary,
     SkillResult,
@@ -370,10 +371,10 @@ class AgentApp(App[None]):
                 command_timeout=self.command_timeout,
             )
             await self.add_message(answer, "assistant")
-        except LlmError as e:
-            # Keep the session: the failed call appended nothing, so the history
-            # is still valid and the user can retry. Only LlmError is expected;
-            # anything else is a bug and should crash loudly.
+        except (LlmError, OutOfTurns) as e:
+            # Keep the session: the history is still valid (LlmError appended
+            # nothing; OutOfTurns kept the turns that ran), so the user can retry
+            # or continue. Anything else is a bug and should crash loudly.
             await self.add_message(str(e), "error")
         finally:
             self.post_message(TurnFinished())
