@@ -1,5 +1,8 @@
 """A coding agent built from scratch."""
 
-__version__ = "0.3.0"
+from importlib.metadata import version
+
+# Single source of truth is pyproject.toml; read it from installed metadata.
+__version__ = version("koding-agent")
 
 __all__ = ["__version__"]
