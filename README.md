@@ -5,87 +5,181 @@
   </picture>
 </h1>
 
-A coding agent built from scratch: a small act → observe → decide loop that asks a
-LLM (local via Ollama by default, or hosted via OpenRouter) for a shell command, runs it, and feeds the output back
-until the model declares the task done.
+A coding agent built from scratch. It runs a small act → observe → decide loop: a
+model (local via Ollama, or hosted via OpenRouter) writes a shell command, the agent
+runs it, and the output goes back to the model until it declares the task done.
+
+It is a learning project that can already do real work, and it has been used to
+develop itself.
 
 ![koding agent start-up banner](docs/images/startup-banner.png)
 
 > [!CAUTION]
-> **Never run this agent directly on your host system.**
-> The agent executes model-written shell commands with `shell=True` and no
-> filtering. A wrong or malicious command can delete files, read credentials, or
-> exfiltrate data. Run it **only inside a container** (at the very least Docker;
-> see [Run the agent](#run-the-agent)), on a throwaway clone of the repository,
-> with nothing secret mounted or reachable.
+> **The agent runs model-written shell commands with no filtering.** A wrong or
+> malicious command can delete files, read credentials or exfiltrate data. Use it
+> for real work **only inside the container** described in
+> [Running in a container](#running-in-a-container), on a throwaway clone of your
+> repository. The host quick start below is for trying things out.
 
-## Status
+## Quick start
 
-This is a learning project that has grown into a *koding agent that could, in
-theory, do real work*. It is small enough to read in one sitting (~250 lines of
-Python), but it is already used to develop itself: features such as parallel
-(batched) tool calls were implemented by the agent working on its own repository.
+You need [uv](https://docs.astral.sh/uv/) and either Ollama running locally or an
+OpenRouter API key. uv fetches the Python version the project requires.
 
-What it does today:
+```sh
+# Run straight from GitHub (no clone needed)
+uvx --from git+https://github.com/kaijennissen/koding-agent koding-agent --version
 
-- **XML action loop** – every reply is one `<action>` containing either `<bash>`
-  (run a command, get the output back) or `<exit>` (final answer).
-- **Three ways to run it** – a terminal UI (the default), a headless one-shot
-  (`--prompt`, answer printed pipe-clean), and a plain line-based REPL (`--plain`).
-  See [Modes](#modes).
-- **Bounded runs** – a turn budget (`--max-turns`), a timeout per command (`--command-timeout`, default 120 s),
-  and truncated tool output (first 2000 chars of stdout and of stderr) so a runaway
-  turn can't flood the context.
-- **Configurable provider** – `--provider` picks the backend (`ollama` by default, or
-  `openrouter` / `openai`, any OpenAI-compatible server); `--model`, `--base-url`, `--api-key-env` and `--timeout` configure it.
-  Ollama defaults to `qwen3.8:27b-mlx`; the OpenAI-style providers have no default model. See
-  [Providers](#providers).
-- **Parallel tool calls** – a turn may batch several independent `<bash>` actions;
-  mixing `<bash>` and `<exit>` is rejected with an error fed back to the model.
-  (Lives on the `multiple_tool_calls` branch; not yet merged into `main`.)
-- **Hardened container** – read-only root filesystem, all capabilities dropped,
-  non-root user, resource limits, and an independent clone as the only writable
-  project state. Design: [`thoughts/shared/plans/001_hardened_agent_container_design.md`](thoughts/shared/plans/001_hardened_agent_container_design.md).
-- **Quality gates** – ruff, pyright (strict), import-linter, pytest, pre-commit, and CI.
-
-Known limits: two model backends (Ollama, OpenRouter), no file-edit tool beyond what bash
-offers (arguably not a limit, see below), no persistence between sessions, and
-the container still has network access to reach Ollama. Docker narrows the
-blast radius; it is not a perfect sandbox. Review the agent's diff before you
-commit or publish anything.
-
-> **Is bash-only really a limitation?** Maybe not. In
-> [*An Empirical Study of Harness Design for Coding Agents*](https://arxiv.org/abs/2609.20804)
-> (Fan et al., 2026), models with good shell proficiency did as well or better with
-> a bash-only action space than with predefined file/search/edit tools, at
-> substantially lower cost, especially on command-line-centric tasks. Weaker models
-> did worse without the structured tools, and results were mixed for some models
-> (one dropped sharply on SWE-Bench but gained on Terminal-Bench), so the benefit
-> depends on the model. The study did not evaluate the model used here.
-
-The [`diary.md`](diary.md) logs pitfalls and design decisions made along the way.
-
-## Develop
-
-Development uses uv with Python 3.14.4; `uv sync` builds the environment. Without
-configuration the agent reaches Ollama at `http://localhost:11434`. The container
-image sets `OLLAMA_HOST=http://host.docker.internal:11434` (the host as seen from a
-container), so develop **inside a container** as well. Override the endpoint with
-`--base-url` or `export OLLAMA_HOST=<full URL>`.
-
-```bash
-uv run ruff check .     # lint
-uv run ruff format .    # format
-uv run pyright          # type-check
-uv run lint-imports     # import boundaries (contracts in pyproject.toml)
-uv run pytest           # test
+# Or from a clone
+git clone https://github.com/kaijennissen/koding-agent && cd koding-agent
+uv sync
+uv run koding-agent -p "list the files in this repo" -t 10
 ```
 
-## Layout
+Start a model first if you use Ollama (the default):
+
+```sh
+ollama serve &
+ollama pull qwen3.8:27b-mlx
+```
+
+Then pick a mode:
+
+```sh
+koding-agent                    # terminal UI (default)
+koding-agent "fix the bug"      # TUI, with this as the first message
+koding-agent -p "fix the bug"   # headless: run once, print the answer
+koding-agent --plain            # line-based REPL
+```
+
+Keep the first runs small with `-t/--max-turns`, and read the diff afterwards.
+
+## Usage
+
+- **TUI:** conversation on the left, live tool calls on the right (yellow = running,
+  green = exit 0, red = failed or timed out, grey = cancelled). `Enter` sends,
+  `Ctrl+J` adds a newline, `Tab` shows or hides the tools panel, `Ctrl+C` quits.
+  While a turn runs, `Enter` is refused. If the model can't be reached, the error is
+  shown and the turn is dropped from history, so you can send again.
+- **Headless (`-p`):** no terminal needed. Progress goes to stdout, then the answer.
+  A model failure exits non-zero. Good for scripts and CI.
+- **`--plain`:** the original REPL. Type `exit` to leave.
+
+The TUI needs an interactive terminal on stdin and stdout. Without one (pipe, cron,
+`docker run` without `-t`) it exits with a hint; use `-p` there.
+
+| Flag | Meaning |
+| --- | --- |
+| `-t/--max-turns N` | turn budget for a run (all modes) |
+| `--command-timeout S` | timeout per shell command (default 120) |
+| `--provider {ollama,openrouter}` | model backend (default `ollama`) |
+| `-m/--model` | model name (Ollama has a default; OpenRouter requires one) |
+| `--base-url` | provider endpoint |
+| `--timeout S` | seconds per model request (default 120) |
+| `--no-context` | do not load `AGENTS.md` project context |
+| `--skills-dir DIR`, `--no-skills` | load skills from a directory, or none |
+
+Run `koding-agent --help` for the full list. Combining `-p`, `--plain` and a
+positional prompt is an error.
+
+## How it works
+
+Every model reply is a single action, either a batch of bash commands or one
+exit with the final answer:
+
+```xml
+<action>
+  <bash>ls src</bash>
+  <bash>wc -l src/*.py</bash>
+</action>
+```
+
+The agent runs the batched commands, returns their output to the model, and repeats.
+A reply that mixes a bash command with an exit is rejected with an error the model sees.
+
+The loop is bounded so a runaway turn can't run forever or flood the context:
+
+- a turn budget (`--max-turns`),
+- a timeout per command (`--command-timeout`),
+- truncated output (first 2000 characters of stdout and of stderr).
+
+Project context comes from an `AGENTS.md` in the working directory, and skills come
+from `.agents/skills/`.
+
+## Providers
+
+Choose the backend with `--provider`. Flags you leave out fall back to the provider's
+defaults. All modes work with every provider.
+
+| Provider | Default model | Key | Endpoint |
+| --- | --- | --- | --- |
+| `ollama` (default) | `qwen3.8:27b-mlx` | none | `--base-url`, then `$OLLAMA_HOST`, then `http://localhost:11434` |
+| `openrouter` | none, `--model` required | `OPENROUTER_API_KEY` (or `--api-key-env`) | OpenRouter API |
+
+```sh
+uv run koding-agent --model <other-model> --plain
+uv run koding-agent --base-url http://other-host:11434 -p "..."
+export OPENROUTER_API_KEY=sk-or-...   # read from the environment, never from a file
+uv run koding-agent --provider openrouter --model <vendor/model-id> -p "..."
+```
+
+A missing model, missing key or unknown provider fails immediately with a message.
+Any API key you export is visible to every command the agent runs, so use a key with
+a spending limit.
+
+## Running in a container
+
+This is the recommended setup. The container runs as a non-root user, with a read-only
+root filesystem, all capabilities dropped and resource limits. The agent works on an
+independent clone mounted at `/workspace`, and the harness code is a read-only copy in
+the image. Your working tree is never touched.
+
+```sh
+# 1. Build the image from this repository.
+docker build --tag agent_sandbox --file Dockerfile .
+
+# 2. Create a fresh clone of the target repository (URL or local path).
+WORKSPACE=/tmp/agent-workspace
+rm -rf "$WORKSPACE"
+git clone --no-hardlinks "$REPO" "$WORKSPACE"   # REPO=. to work on this repository
+
+# 3. Run one agent invocation against the clone.
+docker run --rm -it \
+    --read-only --tmpfs /tmp:size=64m \
+    --cap-drop ALL --security-opt no-new-privileges \
+    --pids-limit 100 --memory 4g --cpus 2 \
+    --add-host=host.docker.internal:host-gateway \
+    --volume "$WORKSPACE":/workspace \
+    agent_sandbox \
+    /opt/app/bin/koding-agent --max-turns 25 --prompt "..."
+
+# 4. Review the changes on the host before you push anything.
+git -C "$WORKSPACE" status
+git -C "$WORKSPACE" diff
+```
+
+Notes:
+
+- Omit `--prompt` for the TUI (keep `-it`), add `--plain` for the REPL, or omit the
+  trailing command for a shell inside the same container.
+- The image has Python, `uv`, Node.js (for pyright), `git`, `curl`, `jq` and `vim`.
+  Inside the container, `uv run pytest`, `uv run ruff check`, `uv run pyright` and
+  `uv run pre-commit run` work in `/workspace`. uv creates `/workspace/.venv` on first
+  use, which needs network access to PyPI. Caches live under `/workspace` because
+  `/tmp` is small and `noexec`.
+- Other toolchains need to be added to the `Dockerfile`. The agent cannot install
+  system packages.
+- The container still has network access, so it can reach Ollama on the host. Docker
+  narrows the blast radius, but it is not a perfect sandbox.
+- Only clone repositories you are willing to let the agent modify. Don't put
+  credentials (SSH keys, tokens, `.env` files) into the clone.
+- On a Linux host the clone must be writable by UID 1000 (the container's `agent` user).
+
+## Architecture
 
 ```text
 src/koding_agent/
-  core/             # the agent: knows nothing about any UI
+  core/             # the agent; knows nothing about any front end
     __init__.py     # curated public API (re-exports only)
     loop.py         # run_agent and turn orchestration
     context.py      # AGENTS.md project context
@@ -98,170 +192,70 @@ src/koding_agent/
     tools/          # bash.py, skills.py
   console.py        # CLI event printing and terminal colours
   banner.py
-  cli.py
-  tui/
+  cli.py            # argument parsing and mode selection
+  tui/              # Textual terminal UI
 ```
 
-Front ends (`cli`, `console`, `tui`) depend on `koding_agent.core`; nothing in
-core imports them, and modules inside core import each other directly, never via
-the `koding_agent.core` facade. `import-linter` (`uv run lint-imports`) enforces
-the core/front-end boundary and the layering inside core; the contracts are in
-`pyproject.toml`.
+The front ends (`cli`, `console`, `tui`) depend on `koding_agent.core`. Core does not
+import them, so the agent loop can be reused from any interface. Inside core, modules
+import each other directly rather than through the `__init__` facade.
 
-**Breaking change:** `koding_agent.agent` is removed, with no compatibility shim.
-Import the supported API from `koding_agent.core` (`run_agent`, `LlmError`,
-`build_system_prompt`, event types, ...), internal helpers from their core
-submodule (e.g. `koding_agent.core.protocol.parse_action`,
-`koding_agent.core.tools.bash.run_bash_tool`), and `print_event` and the colour
-constants from `koding_agent.console`.
+## Development
 
-## Modes
+Development uses uv. `uv sync` creates the environment. Without configuration the
+agent reaches Ollama at `http://localhost:11434`. Inside the container,
+`OLLAMA_HOST` points at the host instead, so develop there too.
 
 ```sh
-koding-agent                    # TUI
-koding-agent "fix the bug"      # TUI, with this as the first message
-koding-agent -p "fix the bug"   # headless: run once, print the answer
-koding-agent --plain            # line-based REPL
+uv run pytest           # tests
+uv run ruff check .     # lint
+uv run ruff format .    # format
+uv run pyright          # type-check (strict)
+uv run pre-commit run   # everything pre-commit runs
 ```
 
-`-t/--max-turns N` applies to all modes. Running out of turns without an `<exit>`
-is reported as an error: `-p` exits non-zero, the TUI and `--plain` keep the session
-so you can ask the agent to continue. Combining `-p`, `--plain` and a positional
-prompt is an error.
+`./test.sh ollama` and `./test.sh openrouter` send a one-line request to each provider
+with `curl`, to check the endpoint and key outside the agent. Pre-commit runs ruff,
+pyright and a lockfile check, and CI runs lint and tests on every push. See
+[AGENTS.md](AGENTS.md) for conventions when working on this repository with a coding
+agent.
 
-- **TUI** – conversation on the left, a live list of tool calls on the right
-  (yellow = running, green = exit 0, red = failed or timed out, grey = cancelled).
-  `Enter` sends, `Ctrl+J` adds a newline, `Tab` shows or hides the tools panel,
-  `Ctrl+C` quits. While a turn is running, `Enter` is refused and your text stays
-  in the prompt. If the model can't be reached the error is shown and the turn is
-  dropped from the history, so you can simply send again.
-- **Headless (`-p`)** – no terminal needed. Turn and tool progress goes to stdout,
-  followed by the answer. A model failure or running out of turns exits non-zero.
-- **`--plain`** – the original REPL. Type `exit` to leave.
+## How it was built
 
-The TUI needs an interactive terminal on both stdin and stdout. Without one (a pipe,
-cron or CI, `docker run` without `-t`, `ssh host cmd` without `-t`) it exits with a
-hint instead of falling back silently; use `-p` there.
+The project grew in steps, and the repository records them:
 
-## Run the agent
+- [`diary.md`](diary.md) logs pitfalls and design decisions, one entry per topic,
+  newest at the bottom. Start here for the reasoning behind `shell=True`, the regex
+  parsing and similar choices.
+- [`thoughts/shared/`](thoughts/shared/) holds the design notes: the hardened container
+  (`001`), the async loop (`003`) and the Textual TUI (`004`).
+- [`docs/event-flow.md`](docs/event-flow.md) describes how events move from the loop
+  to the front ends.
+- Most features, including parallel tool calls, were implemented by the agent working
+  on its own repository, with a human reviewing the diffs.
 
-The agent runs in a hardened container. It works on an independent clone of
-**any git repository** mounted at `/workspace`; the code driving the run is the
-read-only copy of this harness baked into the image at `/app`. The agent never
-touches your real working tree.
+Bash-only is a deliberate choice. In
+[*An Empirical Study of Harness Design for Coding Agents*](https://arxiv.org/abs/2609.20804)
+(Fan et al., 2026), models with good shell skills did as well or better with a
+bash-only action space than with dedicated file, search and edit tools, at lower cost.
+Weaker models did worse without structured tools, and the study did not evaluate the
+model used here, so the benefit depends on the model.
 
-```sh
-# 1. Build the image with the current harness (run from this repository).
-docker build --tag agent_sandbox --file Dockerfile .
+## Status and roadmap
 
-# 2. Pick the target repository and create a fresh, independent clone of it.
-#    REPO can be a remote URL or a local path (local: only committed work is cloned).
-REPO=https://github.com/<owner>/<repo>.git
-WORKSPACE=/tmp/agent-workspace
-rm -rf "$WORKSPACE"
-git clone --no-hardlinks "$REPO" "$WORKSPACE"
+**Works today:** the XML action loop, TUI / headless / REPL modes, batched tool calls,
+two providers, bounded runs, skills, `AGENTS.md` context, and the container setup.
 
-# 3. Run one agent invocation against the clone.
-docker run --rm \
-    -it \
-    --read-only \
-    --tmpfs /tmp:size=64m \
-    --cap-drop ALL \
-    --security-opt no-new-privileges \
-    --pids-limit 100 \
-    --memory 4g \
-    --cpus 2 \
-    --add-host=host.docker.internal:host-gateway \
-    --volume "$WORKSPACE":/workspace \
-    --name agent-sandbox \
-    agent_sandbox \
-    /opt/app/bin/koding-agent --max-turns 25 --prompt "..."
+**Known limits:**
 
-# 4. Review the agent's changes on the host.
-git -C "$WORKSPACE" status
-git -C "$WORKSPACE" diff
-```
+- Two model backends (Ollama, OpenRouter).
+- No dedicated file-edit tool. Bash covers editing.
+- No persistence between sessions.
+- The container has network access, so it is not a perfect sandbox.
 
-To work on this repository itself, use `REPO=.`.
+Review the agent's diff before you commit or publish anything.
 
-Notes:
+## Contributing
 
-- Omit `--prompt` to open the TUI (it needs `-it`, as in the command above), or add
-  `--plain` for the line-based REPL. Omit the trailing command to get an
-  interactive shell in the same container instead.
-- The image ships Python, `uv`, Node.js (for pyright), `git`, `curl`, `jq` and
-  `vim`. Inside the container, `uv run pytest`, `uv run ruff check`,
-  `uv run pyright` and `uv run pre-commit run` work in `/workspace`: uv creates
-  `/workspace/.venv` with the dev dependencies on first use (this needs network
-  access to PyPI). The uv and pre-commit caches live in `/workspace/.uv-cache`
-  and `/workspace/.pre-commit-cache`, because `/tmp` is small and mounted
-  `noexec`. uv always uses the image's Python and never downloads one.
-- If the target repository
-  needs other toolchains, add them to the `Dockerfile`; the agent can't install
-  system packages (non-root, read-only root filesystem).
-- Only clone repositories you are willing to let the agent modify, and review the
-  diff before pushing anything. Don't put credentials (SSH keys, tokens, `.env`
-  files) into the clone.
-- On a Linux host the clone must be writable by UID 1000, the container's `agent`
-  user.
-
-## Providers
-
-Choose the model backend with `--provider` (default `ollama`). Flags you leave out
-fall back to the provider's own defaults. All modes (TUI, `-p`, `--plain`) work with
-every provider.
-
-| Flag | Meaning |
-| --- | --- |
-| `--provider {ollama,openai,openrouter}` | backend to use (default `ollama`) |
-| `-m/--model` | model name; Ollama has a default, the others require one |
-| `--base-url` | provider endpoint. Ollama: the bare host (falls back to `$OLLAMA_HOST`, then `http://localhost:11434`). `openai`/`openrouter`: the API root including `/v1`, e.g. `https://api.openai.com/v1` |
-| `--api-key-env` | name of the environment variable holding the API key (`openai`: `OPENAI_API_KEY`, `openrouter`: `OPENROUTER_API_KEY`) |
-| `--timeout` | seconds per model request (default 120) |
-
-A missing model or API key, or an unknown provider, fails immediately with a message.
-
-The container image sets `OLLAMA_HOST=http://host.docker.internal:11434`, so Ollama
-on the host works from inside the container without extra flags. To use OpenRouter
-in the container you have to pass the key in (`docker run -e OPENROUTER_API_KEY ...`),
-which makes it readable by every command the agent runs; use a key with a spending
-limit.
-
-### Running without Docker
-
-> [!CAUTION]
-> **This runs model-written shell commands directly on your machine.**
-> The agent executes them with `shell=True` and no filtering, with your user's
-> permissions and environment. A wrong or malicious command can delete files,
-> read credentials, or exfiltrate data. Prefer the container setup in
-> [Run the agent](#run-the-agent). If you must run on the host, use a throwaway
-> clone of a repository, a separate user or VM if possible, and nothing secret
-> in the working directory or environment. This matters most with hosted
-> providers: any API key you export is visible to every command the agent runs.
-
-Set up once with `uv sync`, then:
-
-**Ollama (local, default)**
-
-```sh
-ollama serve &                      # skip if Ollama is already running
-ollama pull qwen3.8:27b-mlx         # the default model
-
-uv run koding-agent -p "list the files in this repo"
-uv run koding-agent --model <other-model> --plain
-uv run koding-agent --base-url http://other-host:11434 -p "..."
-```
-
-No API key is needed.
-
-**OpenRouter (hosted)**
-
-```sh
-export OPENROUTER_API_KEY=sk-or-...   # read from the environment, never from a file
-
-uv run koding-agent --provider openrouter --model <vendor/model-id> -p "..."
-```
-
-OpenRouter model IDs look like `vendor/model` (see openrouter.ai/models). Requests go
-to `https://eu.openrouter.ai/api/v1` unless `--base-url` is given. `--provider openai` works the same way (`OPENAI_API_KEY`, `https://api.openai.com/v1`), and `--base-url` points either at any other OpenAI-compatible server. `--base-url` is the API root including `/v1`; before this change the `openrouter` provider took the bare host. To read the key from a
-different variable, use `--api-key-env MY_KEY_VAR`.
+Read [AGENTS.md](AGENTS.md) first. It covers the commands, conventions and the rule
+that agent runs happen only in a container.
