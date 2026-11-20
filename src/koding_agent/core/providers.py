@@ -10,7 +10,7 @@ from typing import Any, ClassVar, Protocol, Self, cast
 import httpx2
 from httpx2 import AsyncClient, Response
 
-from koding_agent.core.llm import LlmError, Message
+from koding_agent.core.llm import LlmError, LlmReply, Message
 
 
 @dataclass(kw_only=True)
@@ -27,7 +27,7 @@ class Provider(Protocol):
 
     model: str
 
-    async def complete(self, messages: list[Message]) -> str: ...
+    async def complete(self, messages: list[Message]) -> LlmReply: ...
     async def aclose(self) -> None: ...
 
 
@@ -131,7 +131,7 @@ class HttpProvider(ABC):
             raise LlmError(f"{cls.__name__} has no default model; pass --model")
         return model
 
-    async def complete(self, messages: list[Message]) -> str:
+    async def complete(self, messages: list[Message]) -> LlmReply:
         """Ask the model for the next reply; every failure is raised as LlmError."""
         response = await post_json(
             client=self.client,
@@ -139,7 +139,7 @@ class HttpProvider(ABC):
             json={"model": self.model, "stream": False, "messages": messages},
         )
         raise_for_error(response)
-        return reply_text(response, *self._REPLY_PATH)
+        return LlmReply(text=reply_text(response, *self._REPLY_PATH))
 
     async def aclose(self) -> None:
         await self.client.aclose()

@@ -1,6 +1,7 @@
 """Message and call types, and the error front ends report."""
 
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TypedDict
 
 
@@ -9,7 +10,22 @@ class Message(TypedDict):
     content: str
 
 
-type LlmCall = Callable[[list[Message]], Awaitable[str]]  # history -> reply
+@dataclass(frozen=True, slots=True)
+class Usage:
+    prompt_tokens: int
+    completion_tokens: int
+
+
+@dataclass(frozen=True, slots=True)
+class LlmReply:
+    """One model answer. Tool calls are empty until tools arrive."""
+
+    text: str
+    tool_calls: tuple[()] = ()
+    usage: Usage | None = None
+
+
+type LlmCall = Callable[[list[Message]], Awaitable[LlmReply]]  # history -> reply
 
 
 class LlmError(Exception):

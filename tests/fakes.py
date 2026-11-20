@@ -1,17 +1,17 @@
 """Test doubles: a scripted model for the LlmCall seam, and canned tool results."""
 
-from koding_agent.core import BashResult, LlmCall, Message
+from koding_agent.core import BashResult, LlmCall, LlmReply, Message
 
 
 def replies(*script: str | Exception) -> LlmCall:
     """A fake model: answers with the scripted texts in order, raises scripted errors."""
     it = iter(script)
 
-    async def call(_messages: list[Message]) -> str:
+    async def call(_messages: list[Message]) -> LlmReply:
         reply = next(it)
         if isinstance(reply, Exception):
             raise reply
-        return reply
+        return LlmReply(text=reply)
 
     return call
 
