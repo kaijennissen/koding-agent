@@ -7,23 +7,35 @@ import pytest
 from koding_agent.core import LlmReply, Usage
 
 
-def test_reply_defaults_to_text_with_no_tool_calls_and_no_usage() -> None:
-    reply = LlmReply(text="hi")
-    assert reply.text == "hi"
-    assert reply.tool_calls == ()
-    assert reply.usage is None
+@pytest.mark.parametrize(
+    ("field", "expected"),
+    [("text", "hi"), ("tool_calls", ()), ("usage", None)],
+    ids=["text", "tool_calls-empty", "usage-none"],
+)
+def test_reply_defaults(field: str, expected: object) -> None:
+    assert getattr(LlmReply(text="hi"), field) == expected
 
 
-def test_reply_carries_optional_usage() -> None:
-    usage = Usage(prompt_tokens=3, completion_tokens=5)
+@pytest.mark.parametrize(
+    ("prompt_tokens", "completion_tokens"),
+    [(3, 5), (0, 0), (1200, 350)],
+    ids=["small", "zero", "large"],
+)
+def test_reply_carries_usage(prompt_tokens: int, completion_tokens: int) -> None:
+    usage = Usage(prompt_tokens=prompt_tokens, completion_tokens=completion_tokens)
     reply = LlmReply(text="hi", usage=usage)
     assert reply.usage == usage
     assert reply.usage is not None
-    assert reply.usage.prompt_tokens == 3
-    assert reply.usage.completion_tokens == 5
+    assert reply.usage.prompt_tokens == prompt_tokens
+    assert reply.usage.completion_tokens == completion_tokens
 
 
-def test_reply_is_frozen() -> None:
+@pytest.mark.parametrize(
+    ("field", "new_value"),
+    [("text", "changed"), ("tool_calls", ("call",)), ("usage", Usage(1, 1))],
+    ids=["text", "tool_calls", "usage"],
+)
+def test_reply_is_frozen(field: str, new_value: object) -> None:
     reply = LlmReply(text="hi")
     with pytest.raises(dataclasses.FrozenInstanceError):
-        reply.text = "changed"  # type: ignore[misc]
+        setattr(reply, field, new_value)
