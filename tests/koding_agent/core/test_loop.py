@@ -12,6 +12,7 @@ from koding_agent.core import (
     Event,
     LlmError,
     Message,
+    OutOfTurns,
     Skill,
     SkillLibrary,
     SkillResult,
@@ -86,13 +87,6 @@ class TestRunAgent:
                 [assistant(MIXED), user(MIXED_ACTIONS_ERROR), assistant(EXIT_DONE)],
                 id="mixed-action-is-fed-back",
             ),
-            pytest.param(
-                [BASH_ECHO, BASH_ECHO],
-                2,
-                "Ran out of turns (2) without an <exit> action.",
-                [assistant(BASH_ECHO), user(ECHO_OBSERVATION)] * 2,
-                id="out-of-turns",
-            ),
         ],
     )
     async def test_conversation(
@@ -112,6 +106,19 @@ class TestRunAgent:
 
         assert result == answer
         assert messages == before + appended
+
+    async def test_out_of_turns_raises_and_keeps_the_turns_that_ran(
+        self, history: list[Message]
+    ) -> None:
+        """No <exit> within the budget is a failure, not an answer."""
+        before = list(history)
+
+        with pytest.raises(
+            OutOfTurns, match=r"^Ran out of turns \(2\) without an <exit> action\.$"
+        ):
+            await run_agent(history, 2, replies(BASH_ECHO, BASH_ECHO), NO_SKILLS)
+
+        assert history == before + [assistant(BASH_ECHO), user(ECHO_OBSERVATION)] * 2
 
     async def test_tools_run_concurrently_and_observations_keep_command_order(
         self, history: list[Message], events: list[Event], tmp_path: Path

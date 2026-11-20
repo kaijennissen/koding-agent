@@ -86,18 +86,19 @@ class HttpProvider(ABC):
 
     A subclass sets `_ENDPOINT` and `_REPLY_PATH` and implements `from_config`,
     which resolves defaults, environment and credentials into explicit values.
+    The base URL is what the vendor's own clients take as theirs: the API root
+    for OpenAI-style vendors (including `/v1`), the bare host for Ollama.
     """
 
     _ENDPOINT: ClassVar[str]
     _REPLY_PATH: ClassVar[tuple[str | int, ...]]
-    DEFAULT_BASE_URL: ClassVar[str]
     DEFAULT_MODEL: ClassVar[str | None] = None  # None: the user must pass a model
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         if getattr(cls.from_config, "__isabstractmethod__", False):
             return  # an intermediate base: its concrete subclasses are checked
-        for name in ("_ENDPOINT", "_REPLY_PATH", "DEFAULT_BASE_URL"):
+        for name in ("_ENDPOINT", "_REPLY_PATH"):
             if not hasattr(cls, name):
                 raise TypeError(f"{cls.__name__} must define {name}")
 
@@ -147,7 +148,7 @@ class HttpProvider(ABC):
 class OllamaProvider(HttpProvider):
     _ENDPOINT = "/api/chat"
     _REPLY_PATH = ("message", "content")
-    DEFAULT_BASE_URL = "http://localhost:11434"
+    DEFAULT_BASE_URL: ClassVar[str] = "http://localhost:11434"
     DEFAULT_MODEL = "qwen3.8:27b-mlx"
     BASE_URL_ENV = "OLLAMA_HOST"
 
@@ -162,20 +163,39 @@ class OllamaProvider(HttpProvider):
         )
 
 
-class OpenrouterProvider(HttpProvider):
-    _ENDPOINT = "/api/v1/chat/completions"
+@dataclass(frozen=True)
+class OpenAIPreset:
+    """Per-vendor values for the OpenAI chat-completions wire format."""
+
+    base_url: str  # the API root, including /v1
+    api_key_env: str
+    default_model: str | None = None  # None: the user must pass a model
+
+
+OPENAI_PRESETS: dict[str, OpenAIPreset] = {
+    "openai": OpenAIPreset("https://api.openai.com/v1", "OPENAI_API_KEY"),
+    "openrouter": OpenAIPreset("https://eu.openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+}
+
+
+class OpenAICompatibleProvider(HttpProvider):
+    """Any server speaking OpenAI chat-completions; vendors differ only by preset."""
+
+    _ENDPOINT = "/chat/completions"
     _REPLY_PATH = ("choices", 0, "message", "content")
-    DEFAULT_BASE_URL = "https://eu.openrouter.ai"
-    API_KEY_ENV = "OPENROUTER_API_KEY"  # no DEFAULT_MODEL: a model is required
 
     @classmethod
     def from_config(cls, cfg: ProviderConfig) -> Self:
-        model = cls._model(cfg)
-        key_var = cfg.api_key_env_var or cls.API_KEY_ENV
+        if not (preset := OPENAI_PRESETS.get(cfg.provider)):
+            raise LlmError(f"Unknown OpenAI-compatible provider: {cfg.provider}")
+        model = cfg.model or preset.default_model
+        if not model:
+            raise LlmError(f"{cfg.provider} has no default model; pass --model")
+        key_var = cfg.api_key_env_var or preset.api_key_env
         if not (token := os.getenv(key_var)):
             raise LlmError(f"${key_var} is not set")
         return cls(
-            base_url=cfg.base_url or cls.DEFAULT_BASE_URL,
+            base_url=cfg.base_url or preset.base_url,
             model=model,
             timeout=DEFAULT_TIMEOUT if cfg.timeout is None else cfg.timeout,
             headers={"Authorization": f"Bearer {token}"},
@@ -184,7 +204,7 @@ class OpenrouterProvider(HttpProvider):
 
 _REGISTRY: dict[str, ProviderFactory] = {
     "ollama": OllamaProvider.from_config,
-    "openrouter": OpenrouterProvider.from_config,
+    **dict.fromkeys(OPENAI_PRESETS, OpenAICompatibleProvider.from_config),
 }
 
 

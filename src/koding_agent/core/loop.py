@@ -3,7 +3,7 @@
 Each turn: ask the model for one or more actions, execute them (concurrently),
 feed the results back. A turn is either one <exit>, one-or-more <bash>, or
 one-or-more <skill> actions; mixing types is not allowed. The loop ends when
-the model emits <exit> or the turn budget runs out.
+the model emits <exit>, or with OutOfTurns when the turn budget runs out.
 """
 
 import asyncio
@@ -21,6 +21,18 @@ from koding_agent.core.tools.skills import (
     format_skill_result,
     run_skill_tool,
 )
+
+
+class OutOfTurns(Exception):
+    """The turn budget ran out before the model sent <exit>.
+
+    The history keeps the turns that did run, so an interactive front end can
+    let the user continue; a one-shot run should fail.
+    """
+
+    def __init__(self, max_turns: int):
+        super().__init__(f"Ran out of turns ({max_turns}) without an <exit> action.")
+        self.max_turns = max_turns
 
 
 def create_uuid():
@@ -91,4 +103,4 @@ async def run_agent(
                 ]
             )
 
-    return f"Ran out of turns ({max_turns}) without an <exit> action.", messages
+    raise OutOfTurns(max_turns)

@@ -23,6 +23,7 @@ from koding_agent.core import (
     Context,
     LlmError,
     Message,
+    OutOfTurns,
     ProviderConfig,
     SkillLibrary,
     build_system_prompt,
@@ -48,7 +49,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         "koding-agent",
         epilog="environment: OLLAMA_HOST  Ollama base URL, e.g. http://localhost:11434 "
-        "(default); OPENROUTER_API_KEY  key for --provider openrouter",
+        "(default); OPENROUTER_API_KEY / OPENAI_API_KEY  key for --provider openrouter / openai",
     )
     parser.add_argument(
         "prompt", nargs="?", help="first message; opens the TUI with it already sent"
@@ -68,7 +69,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "-m",
         "--model",
-        help="model to use (default: the provider's own; required for openrouter)",
+        help="model to use (default: the provider's own; required for openrouter and openai)",
     )
     parser.add_argument(
         "-t", "--max-turns", default=DEFAULT_MAX_TURNS, type=int, help="max turns"
@@ -104,8 +105,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--base-url",
         metavar="URL",
-        help="provider endpoint, a full URL "
-        "(default: the provider's own; ollama: $OLLAMA_HOST)",
+        help="provider endpoint: the bare host for ollama, the API root including /v1 "
+        "for openai and openrouter (default: the provider's own; ollama: $OLLAMA_HOST)",
     )
     parser.add_argument(
         "--api-key-env",
@@ -163,7 +164,7 @@ async def run_headless(
                 on_event=print_event,
                 command_timeout=command_timeout,
             )
-        except LlmError as e:
+        except (LlmError, OutOfTurns) as e:
             sys.exit(f"{RED}{e}{RESET}")  # one-shot: report and fail
         print("\n" + answer + "\n")
 
@@ -201,8 +202,9 @@ async def run_plain(
                     on_event=print_event,
                     command_timeout=command_timeout,
                 )
-            except LlmError as e:
-                # Keep the session: history is still valid, so the user can retry.
+            except (LlmError, OutOfTurns) as e:
+                # Keep the session: history is still valid, so the user can retry
+                # (or, after OutOfTurns, ask the agent to continue).
                 print(f"{RED}{e}{RESET}")
                 continue
             print("\n" + answer + "\n")
