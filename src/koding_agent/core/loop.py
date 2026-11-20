@@ -51,7 +51,7 @@ async def run_agent(
     for turn in range(max_turns):
         emit(on_event, TurnStart(turn, max_turns))
 
-        response = await call(messages)
+        response = (await call(messages)).text
         # print(response)  # the model speaking: the one moment worth watching
         # not yet appended to messages such that a failure in executing the bash calls doesn't leave the agent in a partial state.
         assistant_msg: Message = {"role": "assistant", "content": response}

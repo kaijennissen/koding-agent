@@ -15,7 +15,7 @@ from koding_agent.core.events import (
     TurnStart,
 )
 from koding_agent.core.limits import DEFAULT_COMMAND_TIMEOUT, DEFAULT_MAX_TURNS
-from koding_agent.core.llm import LlmCall, LlmError, Message
+from koding_agent.core.llm import LlmCall, LlmError, LlmReply, Message, Usage
 from koding_agent.core.loop import OutOfTurns, run_agent
 from koding_agent.core.prompts import build_system_prompt
 from koding_agent.core.providers import ProviderConfig, open_provider, provider_names
@@ -38,7 +38,9 @@ __all__ = [
     "Event",
     "LlmCall",
     "LlmError",
+    "LlmReply",
     "Message",
+    "Usage",
     "OnEvent",
     "OutOfTurns",
     "ProviderConfig",

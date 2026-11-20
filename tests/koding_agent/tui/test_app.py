@@ -22,6 +22,7 @@ from koding_agent.core import (
     Event,
     LlmCall,
     LlmError,
+    LlmReply,
     Message,
     SkillCall,
     SkillResult,
@@ -458,9 +459,9 @@ class TestWhileBusy:
 
     @pytest.fixture
     def llm(self, release: asyncio.Event) -> LlmCall:
-        async def blocked(_messages: list[Message]) -> str:
+        async def blocked(_messages: list[Message]) -> LlmReply:
             await release.wait()
-            return EXIT_HI
+            return LlmReply(text=EXIT_HI)
 
         return blocked
 

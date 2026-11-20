@@ -11,6 +11,7 @@ from httpx2 import AsyncClient, Response
 
 from koding_agent.core import (
     LlmError,
+    LlmReply,
     Message,
     ProviderConfig,
     open_provider,
@@ -101,10 +102,14 @@ def seen(monkeypatch: pytest.MonkeyPatch) -> list[httpx2.Request]:
     return requests
 
 
-async def chat(provider: str, **fields: Any) -> str:
+async def chat_reply(provider: str, **fields: Any) -> LlmReply:
     """One round trip through `open_provider`, as a front end would do it."""
     async with open_provider(config(provider, **fields)) as p:
         return await p.complete(MESSAGES)
+
+
+async def chat(provider: str, **fields: Any) -> str:
+    return (await chat_reply(provider, **fields)).text
 
 
 # --- configuration: defaults, precedence and early errors ------------------------
