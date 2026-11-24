@@ -22,11 +22,10 @@ from koding_agent.core import (
     DEFAULT_MAX_TURNS,
     Context,
     LlmError,
-    Message,
     OutOfTurns,
     ProviderConfig,
     SkillLibrary,
-    build_system_prompt,
+    initial_messages,
     load_context,
     load_skills,
     open_provider,
@@ -146,15 +145,10 @@ async def run_headless(
     context: Context | None = None,
 ) -> None:
     async with open_provider(cfg) as provider:
-        messages: list[Message] = [
-            {
-                "role": "system",
-                "content": build_system_prompt(
-                    context, skills.catalog(), command_timeout=command_timeout
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
+        messages = initial_messages(
+            context, skills.catalog(), command_timeout=command_timeout
+        )
+        messages.append({"role": "user", "content": prompt})
         try:
             answer, _ = await run_agent(
                 messages,
@@ -177,14 +171,9 @@ async def run_plain(
     context: Context | None = None,
 ) -> None:
     async with open_provider(cfg) as provider:
-        messages: list[Message] = [
-            {
-                "role": "system",
-                "content": build_system_prompt(
-                    context, skills.catalog(), command_timeout=command_timeout
-                ),
-            }
-        ]
+        messages = initial_messages(
+            context, skills.catalog(), command_timeout=command_timeout
+        )
         print_banner(
             provider.model, context.path.name if context else None, skills.skills
         )

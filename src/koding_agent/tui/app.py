@@ -16,6 +16,7 @@ from textual.message import Message
 from textual.widgets import Footer, ListItem, ListView, Static, TextArea
 
 from koding_agent.banner import render_banner
+from koding_agent.commands import parse_slash
 from koding_agent.core import (
     DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
@@ -35,7 +36,7 @@ from koding_agent.core import (
     ToolResult,
     ToolStart,
     TurnStart,
-    build_system_prompt,
+    initial_messages,
     run_agent,
 )
 from koding_agent.core import (
@@ -246,16 +247,14 @@ class AgentApp(App[None]):
         self.max_turns = max_turns
         self.command_timeout = command_timeout
         self.skills = skills
-        self.messages: list[ChatMessage] = [
-            {
-                "role": "system",
-                "content": build_system_prompt(
-                    context, skills.catalog(), command_timeout=command_timeout
-                ),
-            }
-        ]
+        self.messages: list[ChatMessage] = self.fresh_history()
         self.busy = False
         self.rows: dict[str, ToolRow] = {}  # tool.id -> row
+
+    def fresh_history(self) -> list[ChatMessage]:
+        return initial_messages(
+            self.context, self.skills.catalog(), command_timeout=self.command_timeout
+        )
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="main"):
@@ -350,6 +349,16 @@ class AgentApp(App[None]):
         if not text:
             prompt.clear()
             return
+        match parse_slash(text):
+            case None:
+                pass  # not a command: send it to the model
+            case ("new", _):
+                prompt.clear()
+                await self.reset_session()
+                return
+            case _:
+                prompt.clear()
+                return
         if self.busy:
             self.notify("Agent is busy…", severity="warning")  # keep the typed text
             return
@@ -358,6 +367,18 @@ class AgentApp(App[None]):
         self.messages.append({"role": "user", "content": text})
         self.busy = True
         self.run_worker(self.run_turn(), exclusive=True)
+
+    async def reset_session(self) -> None:
+        """Start over: fresh history, empty tool panel, banner only."""
+        self.messages = self.fresh_history()
+        self.busy = False
+        self.rows.clear()
+        await self.query_one("#tool-list", ListView).clear()
+        self.query_one("#tools", ToolPanel).show(None)
+        self.query_one("#status", Static).update("")
+        conversation = self.query_one("#conversation", VerticalScroll)
+        await conversation.remove_children(".message")
+        self.query_one("#prompt", PromptArea).focus()
 
     async def run_turn(self) -> None:
         """Worker body: run the agent on the history and show its answer or error."""

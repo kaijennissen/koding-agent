@@ -17,7 +17,7 @@ from koding_agent.core.events import (
 from koding_agent.core.limits import DEFAULT_COMMAND_TIMEOUT, DEFAULT_MAX_TURNS
 from koding_agent.core.llm import LlmCall, LlmError, LlmReply, Message, Usage
 from koding_agent.core.loop import OutOfTurns, run_agent
-from koding_agent.core.prompts import build_system_prompt
+from koding_agent.core.prompts import build_system_prompt, initial_messages
 from koding_agent.core.providers import ProviderConfig, open_provider, provider_names
 from koding_agent.core.tools import ToolCall, ToolResult
 from koding_agent.core.tools.bash import BashCall, BashResult
@@ -55,6 +55,7 @@ __all__ = [
     "ToolStart",
     "TurnStart",
     "build_system_prompt",
+    "initial_messages",
     "load_context",
     "load_skills",
     "open_provider",

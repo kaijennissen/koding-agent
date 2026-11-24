@@ -96,6 +96,10 @@ def prompt_text(app: AgentApp) -> str:
     return app.query_one("#prompt", PromptArea).text
 
 
+def tool_details(app: AgentApp) -> str:
+    return str(app.query_one("#tool-details", Static).render())
+
+
 def row_for(app: AgentApp, id: str) -> ToolRow:
     (row,) = [r for r in app.query(ToolRow) if r.tool.id == id]
     return row
@@ -285,10 +289,6 @@ class TestDescribe:
 class TestToolInspection:
     """Clicking or arrowing through the tool list shows the details below it."""
 
-    @staticmethod
-    def details(app: AgentApp) -> str:
-        return str(app.query_one("#tool-details", Static).render())
-
     async def start_two(self, app: AgentApp, pilot: Pilot[None]) -> None:
         app.forward_event(ToolStart(LS))
         app.forward_event(ToolEnd(LS, FAILED))
@@ -299,7 +299,7 @@ class TestToolInspection:
         self, app: AgentApp, pilot: Pilot[None]
     ) -> None:
         await self.start_two(app, pilot)
-        assert self.details(app) == NO_SELECTION
+        assert tool_details(app) == NO_SELECTION
 
     async def test_click_shows_the_details(
         self, app: AgentApp, pilot: Pilot[None]
@@ -307,8 +307,8 @@ class TestToolInspection:
         await self.start_two(app, pilot)
         await pilot.click(row_for(app, "a"))
         await pilot.pause()
-        assert "$ ls" in self.details(app)
-        assert "boom" in self.details(app)
+        assert "$ ls" in tool_details(app)
+        assert "boom" in tool_details(app)
 
     async def test_ctrl_t_starts_on_the_latest_and_arrows_navigate(
         self, app: AgentApp, pilot: Pilot[None]
@@ -316,10 +316,10 @@ class TestToolInspection:
         await self.start_two(app, pilot)
         await pilot.press("ctrl+t")
         await pilot.pause()
-        assert self.details(app).startswith("Bash · running\n$ pwd")
+        assert tool_details(app).startswith("Bash · running\n$ pwd")
         await pilot.press("up")
         await pilot.pause()
-        assert "$ ls" in self.details(app)
+        assert "$ ls" in tool_details(app)
 
     async def test_escape_returns_to_the_prompt(
         self, app: AgentApp, pilot: Pilot[None]
@@ -335,8 +335,8 @@ class TestToolInspection:
         await pilot.press("ctrl+t")
         app.forward_event(ToolEnd(BashCall(id="b", cmd="pwd"), ok("pwd")))
         await pilot.pause()
-        assert "exit code: 0" in self.details(app)
-        assert "pwd output" in self.details(app)
+        assert "exit code: 0" in tool_details(app)
+        assert "pwd output" in tool_details(app)
 
 
 class TestCoreEvents:
@@ -479,3 +479,34 @@ class TestWhileBusy:
         await settle(app, pilot)
         assert not app.busy
         assert texts(app, ".message.assistant") == ["hi"]
+
+
+class TestNewSession:
+    @pytest.mark.parametrize("script", [[BASH_TRUE, EXIT_HI, EXIT_HI]])
+    async def test_new_command_resets_the_session_without_asking_the_model(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        system_prompt = app.messages[0]
+        await submit(app, pilot, "go")
+        await pilot.press("ctrl+t", "escape")  # show a tool's details, back to prompt
+        await pilot.pause()
+        assert tool_details(app) != NO_SELECTION
+
+        await submit(app, pilot, "/new")
+
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert app.messages[0] == system_prompt
+        assert not [m for m in app.messages if m["content"] == "/new"]
+        assert not app.query(ToolRow)
+        assert texts(app, ".message") == []
+        assert app.query_one("#conversation", VerticalScroll).children[0] is (
+            app.query_one("#banner", Static)
+        )
+        assert not app.busy
+        assert status_line(app) == ""
+        assert prompt_text(app) == ""
+        assert tool_details(app) == NO_SELECTION
+
+        await submit(app, pilot, "again")
+
+        assert [m["content"] for m in app.messages[1:]] == ["again", EXIT_HI]

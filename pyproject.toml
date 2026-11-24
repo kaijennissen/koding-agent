@@ -82,6 +82,18 @@ forbidden_modules = [
     "koding_agent.console",
     "koding_agent.banner",
     "koding_agent.tui",
+    "koding_agent.commands",
+    "textual",
+    "rich",
+]
+
+[[tool.importlinter.contracts]]
+name = "Shared commands know nothing about front ends"
+type = "forbidden"
+source_modules = ["koding_agent.commands"]
+forbidden_modules = [
+    "koding_agent.tui",
+    "koding_agent.cli",
     "textual",
     "rich",
 ]
