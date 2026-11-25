@@ -64,7 +64,8 @@ Keep the first runs small with `-t/--max-turns`, and read the diff afterwards.
   shown and the turn is dropped from history, so you can send again.
 - **Headless (`-p`):** no terminal needed. Progress goes to stdout, then the answer.
   A model failure exits non-zero. Good for scripts and CI.
-- **`--plain`:** the original REPL. Type `exit` to leave.
+- **`--plain`:** the original REPL. Type `exit` to leave. `/new` (alias `/clear`)
+  starts a fresh history; unknown `/commands` are reported, not sent.
 
 The TUI needs an interactive terminal on stdin and stdout. Without one (pipe, cron,
 `docker run` without `-t`) it exits with a hint; use `-p` there.
