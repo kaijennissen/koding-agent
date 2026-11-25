@@ -1,7 +1,7 @@
 """Mode selection and argument rules of the command line."""
 
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
 from contextlib import asynccontextmanager
 
 import pytest
@@ -11,9 +11,16 @@ from koding_agent import cli
 from koding_agent.cli import (
     Mode,
     parse_args,
+    run_plain,
     select_mode,
 )
-from koding_agent.core import DEFAULT_COMMAND_TIMEOUT
+from koding_agent.core import (
+    DEFAULT_COMMAND_TIMEOUT,
+    LlmReply,
+    Message,
+    ProviderConfig,
+    SkillLibrary,
+)
 
 
 @pytest.mark.parametrize(
@@ -172,3 +179,94 @@ def test_headless_exit_status(
     else:
         with pytest.raises(SystemExit, match=re.escape(exit_code)):
             cli.cli(argv)
+
+
+class RecordingProvider:
+    """A provider that records the history of each call and always exits."""
+
+    def __init__(self) -> None:
+        self.model = "fake"
+        self.calls: list[list[Message]] = []
+
+    async def complete(self, messages: list[Message]) -> LlmReply:
+        self.calls.append([Message(**m) for m in messages])
+        return LlmReply(text="<action><exit>hi</exit></action>")
+
+
+def roles_and_contents(messages: list[Message]) -> list[tuple[str, str]]:
+    return [(m["role"], m["content"]) for m in messages]
+
+
+class TestPlainSlashCommands:
+    @pytest.fixture
+    def provider(self, monkeypatch: pytest.MonkeyPatch) -> RecordingProvider:
+        fake = RecordingProvider()
+
+        @asynccontextmanager
+        async def fake_open_provider(_cfg: object) -> AsyncGenerator[RecordingProvider]:
+            yield fake
+
+        monkeypatch.setattr(cli, "open_provider", fake_open_provider)
+        return fake
+
+    @staticmethod
+    async def run(monkeypatch: pytest.MonkeyPatch, *lines: str) -> None:
+        """Run the plain REPL, typing `lines` at the prompt."""
+        typed: Iterator[str] = iter(lines)
+        monkeypatch.setattr("builtins.input", lambda _prompt="": next(typed))
+        await run_plain(
+            cfg=ProviderConfig(provider="ollama", model=None),
+            max_turns=5,
+            command_timeout=1.0,
+            skills=SkillLibrary({}),
+            context=None,
+        )
+
+    @pytest.mark.parametrize("command", ["/new", "/clear"])
+    async def test_new_starts_a_fresh_history(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        provider: RecordingProvider,
+        command: str,
+    ) -> None:
+        """/new and its alias /clear drop the conversation but keep the system prompt."""
+        await self.run(monkeypatch, "a", command, "b", "exit")
+
+        system = provider.calls[0][0]["content"]
+        assert roles_and_contents(provider.calls[-1]) == [
+            ("system", system),
+            ("user", "b"),
+        ]
+
+    async def test_unknown_command_is_not_sent_and_reports_an_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        provider: RecordingProvider,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        await self.run(monkeypatch, "/nope", "exit")
+
+        assert provider.calls == []
+        assert "Unknown command: /nope" in capsys.readouterr().out
+
+    async def test_unknown_command_keeps_the_history(
+        self, monkeypatch: pytest.MonkeyPatch, provider: RecordingProvider
+    ) -> None:
+        await self.run(monkeypatch, "a", "/nope", "b", "exit")
+
+        system = provider.calls[0][0]["content"]
+        assert roles_and_contents(provider.calls[-1]) == [
+            ("system", system),
+            ("user", "a"),
+            ("assistant", "<action><exit>hi</exit></action>"),
+            ("user", "b"),
+        ]
+
+    async def test_a_path_is_sent_as_a_prompt(
+        self, monkeypatch: pytest.MonkeyPatch, provider: RecordingProvider
+    ) -> None:
+        """A first word containing another slash is a path, not a command."""
+        await self.run(monkeypatch, "/etc/hosts is missing", "exit")
+
+        assert len(provider.calls) == 1
+        assert provider.calls[0][-1]["content"] == "/etc/hosts is missing"

@@ -16,6 +16,7 @@ from typing import Literal
 
 from koding_agent import __version__
 from koding_agent.banner import RESET, print_banner, prompt_text
+from koding_agent.commands import canonical, parse_slash
 from koding_agent.console import RED, print_event
 from koding_agent.core import (
     DEFAULT_COMMAND_TIMEOUT,
@@ -26,7 +27,7 @@ from koding_agent.core import (
     OutOfTurns,
     ProviderConfig,
     SkillLibrary,
-    build_system_prompt,
+    initial_messages,
     load_context,
     load_skills,
     open_provider,
@@ -146,15 +147,10 @@ async def run_headless(
     context: Context | None = None,
 ) -> None:
     async with open_provider(cfg) as provider:
-        messages: list[Message] = [
-            {
-                "role": "system",
-                "content": build_system_prompt(
-                    context, skills.catalog(), command_timeout=command_timeout
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
+        messages = initial_messages(
+            context, skills.catalog(), command_timeout=command_timeout
+        )
+        messages.append({"role": "user", "content": prompt})
         try:
             answer, _ = await run_agent(
                 messages,
@@ -177,21 +173,30 @@ async def run_plain(
     context: Context | None = None,
 ) -> None:
     async with open_provider(cfg) as provider:
-        messages: list[Message] = [
-            {
-                "role": "system",
-                "content": build_system_prompt(
-                    context, skills.catalog(), command_timeout=command_timeout
-                ),
-            }
-        ]
-        print_banner(
-            provider.model, context.path.name if context else None, skills.skills
-        )
+
+        def start_session() -> list[Message]:
+            """A new history (system prompt only), announced with the banner."""
+            print_banner(
+                provider.model, context.path.name if context else None, skills.skills
+            )
+            return initial_messages(
+                context, skills.catalog(), command_timeout=command_timeout
+            )
+
+        messages = start_session()
         while True:
             prompt = input(prompt_text())
             if prompt == "exit":
                 return
+            match parse_slash(prompt.strip()):
+                case None:
+                    pass
+                case (name, _):
+                    if canonical(name) == "new":
+                        messages = start_session()
+                    else:
+                        print(f"{RED}Unknown command: /{name}{RESET}")
+                    continue
             messages.append({"role": "user", "content": prompt})
             try:
                 answer, messages = await run_agent(

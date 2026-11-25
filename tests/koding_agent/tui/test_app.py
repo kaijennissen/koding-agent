@@ -6,7 +6,7 @@ a special model overrides `llm`.
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import pytest
 from textual.app import App, ComposeResult
@@ -84,6 +84,18 @@ async def submit(app: AgentApp, pilot: Pilot[None], text: str) -> None:
     await settle(app, pilot)
 
 
+async def wait_until(
+    pilot: Pilot[None], predicate: Callable[[], bool], timeout: float = 5.0
+) -> None:
+    """Let the app run until `predicate()` is true; fail the test on timeout."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            pytest.fail(f"condition not met within {timeout}s")
+        await pilot.pause(0.01)
+
+
 def texts(app: App[None], selector: str) -> list[str]:
     return [str(w.render()) for w in app.query(selector)]
 
@@ -94,6 +106,10 @@ def status_line(app: AgentApp) -> str:
 
 def prompt_text(app: AgentApp) -> str:
     return app.query_one("#prompt", PromptArea).text
+
+
+def tool_details(app: AgentApp) -> str:
+    return str(app.query_one("#tool-details", Static).render())
 
 
 def row_for(app: AgentApp, id: str) -> ToolRow:
@@ -285,10 +301,6 @@ class TestDescribe:
 class TestToolInspection:
     """Clicking or arrowing through the tool list shows the details below it."""
 
-    @staticmethod
-    def details(app: AgentApp) -> str:
-        return str(app.query_one("#tool-details", Static).render())
-
     async def start_two(self, app: AgentApp, pilot: Pilot[None]) -> None:
         app.forward_event(ToolStart(LS))
         app.forward_event(ToolEnd(LS, FAILED))
@@ -299,7 +311,7 @@ class TestToolInspection:
         self, app: AgentApp, pilot: Pilot[None]
     ) -> None:
         await self.start_two(app, pilot)
-        assert self.details(app) == NO_SELECTION
+        assert tool_details(app) == NO_SELECTION
 
     async def test_click_shows_the_details(
         self, app: AgentApp, pilot: Pilot[None]
@@ -307,8 +319,8 @@ class TestToolInspection:
         await self.start_two(app, pilot)
         await pilot.click(row_for(app, "a"))
         await pilot.pause()
-        assert "$ ls" in self.details(app)
-        assert "boom" in self.details(app)
+        assert "$ ls" in tool_details(app)
+        assert "boom" in tool_details(app)
 
     async def test_ctrl_t_starts_on_the_latest_and_arrows_navigate(
         self, app: AgentApp, pilot: Pilot[None]
@@ -316,10 +328,10 @@ class TestToolInspection:
         await self.start_two(app, pilot)
         await pilot.press("ctrl+t")
         await pilot.pause()
-        assert self.details(app).startswith("Bash · running\n$ pwd")
+        assert tool_details(app).startswith("Bash · running\n$ pwd")
         await pilot.press("up")
         await pilot.pause()
-        assert "$ ls" in self.details(app)
+        assert "$ ls" in tool_details(app)
 
     async def test_escape_returns_to_the_prompt(
         self, app: AgentApp, pilot: Pilot[None]
@@ -335,8 +347,8 @@ class TestToolInspection:
         await pilot.press("ctrl+t")
         app.forward_event(ToolEnd(BashCall(id="b", cmd="pwd"), ok("pwd")))
         await pilot.pause()
-        assert "exit code: 0" in self.details(app)
-        assert "pwd output" in self.details(app)
+        assert "exit code: 0" in tool_details(app)
+        assert "pwd output" in tool_details(app)
 
 
 class TestCoreEvents:
@@ -479,3 +491,142 @@ class TestWhileBusy:
         await settle(app, pilot)
         assert not app.busy
         assert texts(app, ".message.assistant") == ["hi"]
+
+
+class TestNewSession:
+    @pytest.mark.parametrize("script", [[BASH_TRUE, EXIT_HI, EXIT_HI]])
+    async def test_new_command_resets_the_session_without_asking_the_model(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        system_prompt = app.messages[0]
+        await submit(app, pilot, "go")
+        await pilot.press("ctrl+t", "escape")  # show a tool's details, back to prompt
+        await pilot.pause()
+        assert tool_details(app) != NO_SELECTION
+
+        await submit(app, pilot, "/new")
+
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert app.messages[0] == system_prompt
+        assert not [m for m in app.messages if m["content"] == "/new"]
+        assert not app.query(ToolRow)
+        assert texts(app, ".message") == []
+        assert app.query_one("#conversation", VerticalScroll).children[0] is (
+            app.query_one("#banner", Static)
+        )
+        assert not app.busy
+        assert status_line(app) == ""
+        assert prompt_text(app) == ""
+        assert tool_details(app) == NO_SELECTION
+
+        await submit(app, pilot, "again")
+
+        assert [m["content"] for m in app.messages[1:]] == ["again", EXIT_HI]
+
+    @pytest.mark.parametrize(
+        "script", [["<action><bash>sleep 30</bash></action>", EXIT_HI]]
+    )
+    async def test_new_command_while_a_tool_runs_cancels_the_turn(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await pilot.press(*"go", "enter")
+        await wait_until(
+            pilot, lambda: any(r.status == "running" for r in app.query(ToolRow))
+        )
+
+        await submit(app, pilot, "/new")
+
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert not app.query(ToolRow)
+        assert texts(app, ".message") == []
+        assert not app.busy
+        assert status_line(app) == ""
+
+        await submit(app, pilot, "again")
+
+        assert [m["content"] for m in app.messages[1:]] == ["again", EXIT_HI]
+        assert texts(app, ".message.assistant") == ["hi"]
+
+    @pytest.mark.parametrize("script", [[EXIT_HI, EXIT_HI]])
+    async def test_new_command_right_after_a_submit_leaves_the_app_usable(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        """Both submits are queued before the turn's worker has started, e.g. pasted text."""
+        app.post_message(PromptArea.Submitted("go"))
+        app.post_message(PromptArea.Submitted("/new"))
+        await settle(app, pilot)
+
+        assert not app.busy
+        assert status_line(app) == ""
+        assert [m["role"] for m in app.messages] == ["system"]
+
+        await submit(app, pilot, "again")
+
+        assert [m["content"] for m in app.messages[-2:]] == ["again", EXIT_HI]
+
+    async def test_ctrl_n_starts_a_new_session_and_keeps_the_draft(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await submit(app, pilot, "go")
+        await pilot.press(*"draft")
+
+        await pilot.press("ctrl+n")
+        await settle(app, pilot)
+
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert texts(app, ".message") == []
+        assert prompt_text(app) == "draft"
+        assert app.query_one("#prompt", PromptArea).has_focus
+
+    @pytest.mark.parametrize(
+        "script", [["<action><bash>sleep 30</bash></action>", EXIT_HI]]
+    )
+    async def test_ctrl_n_while_a_tool_runs_from_the_tool_list_cancels_the_turn(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await pilot.press(*"go", "enter")
+        await wait_until(
+            pilot, lambda: any(r.status == "running" for r in app.query(ToolRow))
+        )
+
+        await pilot.press("ctrl+t")  # focus the tool list
+        await pilot.press("ctrl+n")
+        await settle(app, pilot)
+
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert not app.query(ToolRow)
+        assert not app.busy
+        assert app.query_one("#prompt", PromptArea).has_focus
+
+        await submit(app, pilot, "again")
+
+        assert [m["content"] for m in app.messages[1:]] == ["again", EXIT_HI]
+
+
+class TestSlashCommands:
+    async def test_unknown_command_shows_an_error_and_is_not_sent(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await submit(app, pilot, "/nope")
+
+        assert texts(app, ".message.error") == ["Unknown command: /nope"]
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert prompt_text(app) == ""
+
+    async def test_a_path_is_sent_as_a_prompt(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await submit(app, pilot, "/etc/hosts is missing")
+
+        assert app.messages[1]["content"] == "/etc/hosts is missing"
+        assert texts(app, ".message.assistant") == ["hi"]
+
+    async def test_clear_is_an_alias_for_new(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await submit(app, pilot, "go")
+
+        await submit(app, pilot, "/clear")
+
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert texts(app, ".message") == []

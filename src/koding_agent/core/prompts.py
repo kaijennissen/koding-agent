@@ -2,6 +2,7 @@
 
 from koding_agent.core.context import Context
 from koding_agent.core.limits import DEFAULT_COMMAND_TIMEOUT, MAX_OUTPUT_CHARS
+from koding_agent.core.llm import Message
 
 # Filled in by build_system_prompt, so the limits the model is told about are the
 # ones the harness enforces.
@@ -91,3 +92,16 @@ def build_system_prompt(
     if context is not None:
         prompt += f"\n\n# Project Context\n\n## {context.path}\n\n{context.text}\n"
     return prompt
+
+
+def initial_messages(
+    context: Context | None,
+    skill_catalog: str,
+    *,
+    command_timeout: float = DEFAULT_COMMAND_TIMEOUT,
+) -> list[Message]:
+    """The history a new conversation starts from: the system prompt."""
+    prompt = build_system_prompt(
+        context, skill_catalog, command_timeout=command_timeout
+    )
+    return [{"role": "system", "content": prompt}]
