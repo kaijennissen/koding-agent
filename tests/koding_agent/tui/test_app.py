@@ -6,7 +6,7 @@ a special model overrides `llm`.
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 
 import pytest
 from textual.app import App, ComposeResult
@@ -82,6 +82,18 @@ async def settle(app: AgentApp, pilot: Pilot[None]) -> None:
 async def submit(app: AgentApp, pilot: Pilot[None], text: str) -> None:
     await pilot.press(*text, "enter")
     await settle(app, pilot)
+
+
+async def wait_until(
+    pilot: Pilot[None], predicate: Callable[[], bool], timeout: float = 5.0
+) -> None:
+    """Let the app run until `predicate()` is true; fail the test on timeout."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() > deadline:
+            pytest.fail(f"condition not met within {timeout}s")
+        await pilot.pause(0.01)
 
 
 def texts(app: App[None], selector: str) -> list[str]:
@@ -510,3 +522,44 @@ class TestNewSession:
         await submit(app, pilot, "again")
 
         assert [m["content"] for m in app.messages[1:]] == ["again", EXIT_HI]
+
+    @pytest.mark.parametrize(
+        "script", [["<action><bash>sleep 30</bash></action>", EXIT_HI]]
+    )
+    async def test_new_command_while_a_tool_runs_cancels_the_turn(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await pilot.press(*"go", "enter")
+        await wait_until(
+            pilot, lambda: any(r.status == "running" for r in app.query(ToolRow))
+        )
+
+        await submit(app, pilot, "/new")
+
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert not app.query(ToolRow)
+        assert texts(app, ".message") == []
+        assert not app.busy
+        assert status_line(app) == ""
+
+        await submit(app, pilot, "again")
+
+        assert [m["content"] for m in app.messages[1:]] == ["again", EXIT_HI]
+        assert texts(app, ".message.assistant") == ["hi"]
+
+    @pytest.mark.parametrize("script", [[EXIT_HI, EXIT_HI]])
+    async def test_new_command_right_after_a_submit_leaves_the_app_usable(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        """Both submits are queued before the turn's worker has started, e.g. pasted text."""
+        app.post_message(PromptArea.Submitted("go"))
+        app.post_message(PromptArea.Submitted("/new"))
+        await settle(app, pilot)
+
+        assert not app.busy
+        assert status_line(app) == ""
+        assert [m["role"] for m in app.messages] == ["system"]
+
+        await submit(app, pilot, "again")
+
+        assert [m["content"] for m in app.messages[-2:]] == ["again", EXIT_HI]
