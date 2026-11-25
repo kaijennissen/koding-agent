@@ -59,9 +59,11 @@ Keep the first runs small with `-t/--max-turns`, and read the diff afterwards.
 - **TUI:** conversation on the left, live tool calls on the right (yellow = running,
   green = exit 0, red = failed or timed out, grey = cancelled). `Enter` sends,
   `Ctrl+J` adds a newline, `Tab` shows or hides the tools panel, `Ctrl+C` quits.
-  `Ctrl+N` starts a new session and keeps your typed draft (`/new`, alias `/clear`,
-  does the same). While a turn runs, `Enter` is refused. If the model can't be reached, the error is
-  shown and the turn is dropped from history, so you can send again.
+  `/new` (alias `/clear`) or `Ctrl+N` starts a new session, cancelling a running
+  turn; `Ctrl+N` keeps your typed draft. Unknown `/commands` are reported, not sent.
+  While a turn runs, `Enter` is refused for messages (commands still work). If the
+  model can't be reached, the error is shown and the turn is dropped from history,
+  so you can send again.
 - **Headless (`-p`):** no terminal needed. Progress goes to stdout, then the answer.
   A model failure exits non-zero. Good for scripts and CI.
 - **`--plain`:** the original REPL. Type `exit` to leave. `/new` (alias `/clear`)
