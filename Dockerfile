@@ -33,6 +33,10 @@ RUN groupadd --gid 1000 agent && \
 ENV HOME=/tmp
 # The host as seen from the container (see README "Run the agent").
 ENV OLLAMA_HOST=http://host.docker.internal:11434
+# True-colour TUI: `docker run -it` doesn't forward the host's terminal
+# settings, so TUIs would fall back to 8/256 colours.
+ENV TERM=xterm-256color \
+    COLORTERM=truecolor
 # Dev tools (uv, ruff, pyright, pytest, pre-commit) in the workspace:
 # - use the image's Python and never download one (it would not fit in /tmp);
 # - keep caches on /workspace, because /tmp is small and mounted noexec.
