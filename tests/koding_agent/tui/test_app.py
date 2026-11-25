@@ -564,6 +564,44 @@ class TestNewSession:
 
         assert [m["content"] for m in app.messages[-2:]] == ["again", EXIT_HI]
 
+    async def test_ctrl_n_starts_a_new_session_and_keeps_the_draft(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await submit(app, pilot, "go")
+        await pilot.press(*"draft")
+
+        await pilot.press("ctrl+n")
+        await settle(app, pilot)
+
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert texts(app, ".message") == []
+        assert prompt_text(app) == "draft"
+        assert app.query_one("#prompt", PromptArea).has_focus
+
+    @pytest.mark.parametrize(
+        "script", [["<action><bash>sleep 30</bash></action>", EXIT_HI]]
+    )
+    async def test_ctrl_n_while_a_tool_runs_from_the_tool_list_cancels_the_turn(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await pilot.press(*"go", "enter")
+        await wait_until(
+            pilot, lambda: any(r.status == "running" for r in app.query(ToolRow))
+        )
+
+        await pilot.press("ctrl+t")  # focus the tool list
+        await pilot.press("ctrl+n")
+        await settle(app, pilot)
+
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert not app.query(ToolRow)
+        assert not app.busy
+        assert app.query_one("#prompt", PromptArea).has_focus
+
+        await submit(app, pilot, "again")
+
+        assert [m["content"] for m in app.messages[1:]] == ["again", EXIT_HI]
+
 
 class TestSlashCommands:
     async def test_unknown_command_shows_an_error_and_is_not_sent(

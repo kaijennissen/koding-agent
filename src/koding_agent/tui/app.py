@@ -231,6 +231,7 @@ class AgentApp(App[None]):
     BINDINGS = [
         Binding("tab", "toggle_tools", "Tools", priority=True),
         Binding("ctrl+t", "focus_tools", "Inspect", priority=True),
+        Binding("ctrl+n", "new_session", "New", priority=True),
         Binding("escape", "focus_prompt", "Back", show=False),
         Binding("ctrl+c", "quit", "Exit", priority=True),
     ]
@@ -303,6 +304,10 @@ class AgentApp(App[None]):
 
     def action_focus_prompt(self) -> None:
         self.query_one("#prompt", PromptArea).focus()
+
+    async def action_new_session(self) -> None:
+        """Ctrl+N; unlike `/new`, the typed draft is kept."""
+        await self.start_new_session()
 
     def forward_event(self, event: Event) -> None:
         """The core's OnEvent callback: translate to a message and return at once."""
