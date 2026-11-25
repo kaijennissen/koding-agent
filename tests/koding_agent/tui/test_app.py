@@ -563,3 +563,32 @@ class TestNewSession:
         await submit(app, pilot, "again")
 
         assert [m["content"] for m in app.messages[-2:]] == ["again", EXIT_HI]
+
+
+class TestSlashCommands:
+    async def test_unknown_command_shows_an_error_and_is_not_sent(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await submit(app, pilot, "/nope")
+
+        assert texts(app, ".message.error") == ["Unknown command: /nope"]
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert prompt_text(app) == ""
+
+    async def test_a_path_is_sent_as_a_prompt(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await submit(app, pilot, "/etc/hosts is missing")
+
+        assert app.messages[1]["content"] == "/etc/hosts is missing"
+        assert texts(app, ".message.assistant") == ["hi"]
+
+    async def test_clear_is_an_alias_for_new(
+        self, app: AgentApp, pilot: Pilot[None]
+    ) -> None:
+        await submit(app, pilot, "go")
+
+        await submit(app, pilot, "/clear")
+
+        assert [m["role"] for m in app.messages] == ["system"]
+        assert texts(app, ".message") == []

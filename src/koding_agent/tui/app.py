@@ -18,7 +18,7 @@ from textual.widgets import Footer, ListItem, ListView, Static, TextArea
 from textual.worker import WorkerCancelled
 
 from koding_agent.banner import render_banner
-from koding_agent.commands import parse_slash
+from koding_agent.commands import canonical, parse_slash
 from koding_agent.core import (
     DEFAULT_COMMAND_TIMEOUT,
     DEFAULT_MAX_TURNS,
@@ -358,12 +358,9 @@ class AgentApp(App[None]):
         match parse_slash(text):
             case None:
                 pass  # not a command: send it to the model
-            case ("new", _):
+            case (name, _):
                 prompt.clear()
-                await self.start_new_session()
-                return
-            case _:
-                prompt.clear()
+                await self.run_command(name)
                 return
         if self.busy:
             self.notify("Agent is busy…", severity="warning")  # keep the typed text
@@ -372,7 +369,15 @@ class AgentApp(App[None]):
         await self.add_message(f"> {text}", "user")
         self.messages.append({"role": "user", "content": text})
         self.busy = True
-        self.run_worker(self.run_turn(), exclusive=True, group="turn")
+        self.run_worker(self.run_turn, exclusive=True, group="turn")
+
+    async def run_command(self, name: str) -> None:
+        """Run the slash command `name` (as typed; aliases are resolved here)."""
+        match canonical(name):
+            case "new":
+                await self.start_new_session()
+            case _:
+                await self.add_message(f"Unknown command: /{name}", "error")
 
     async def start_new_session(self) -> None:
         """Cancel the running turn, then post `NewSession` so the reset runs last."""

@@ -2,7 +2,7 @@
 
 import pytest
 
-from koding_agent.commands import parse_slash
+from koding_agent.commands import canonical, parse_slash
 
 
 @pytest.mark.parametrize(
@@ -30,3 +30,11 @@ from koding_agent.commands import parse_slash
 )
 def test_parse_slash(text: str, expected: tuple[str, str] | None) -> None:
     assert parse_slash(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("clear", "new"), ("new", "new"), ("nope", "nope")],
+)
+def test_canonical(name: str, expected: str) -> None:
+    assert canonical(name) == expected
